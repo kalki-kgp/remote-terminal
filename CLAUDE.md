@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Connect is a self-hosted browser-based terminal access tool for macOS. It allows users to access their Mac's terminal from any device via a web browser, with features like session persistence, multiple tabs, tmux integration, and mobile-optimized UX.
+Connect is a self-hosted browser-based terminal access tool. It allows users to access their computer's terminal from any device via a web browser, with features like session persistence, multiple tabs, tmux integration (macOS/Linux), and mobile-optimized UX.
 
 ## Tech Stack
 
@@ -10,7 +10,7 @@ Connect is a self-hosted browser-based terminal access tool for macOS. It allows
 - **Terminal:** node-pty for PTY spawning
 - **Frontend:** Vanilla JS, xterm.js
 - **Tunneling:** ngrok or cloudflared
-- **Target Platform:** macOS (Apple Silicon M-series)
+- **Supported Platforms:** macOS, Windows 10+, Linux
 
 ## Project Structure
 
@@ -47,7 +47,12 @@ connect/
 npm start
 # or
 node src/server.js
+
+# Skip the setup prompts
+npm start -- --skip-setup
 ```
+
+On first run, Connect will check for dependencies (tmux, WSL on Windows) and offer to install them automatically.
 
 ### Testing changes
 The server auto-displays a QR code and URL. Open on mobile to test mobile features.
@@ -86,10 +91,27 @@ Edit `public/index.html` around line 687. Button types:
 | `TOKEN_LIFETIME` | 86400000 | Token TTL (24h) |
 | `TOKEN_ROTATION` | 43200000 | Rotation interval (12h) |
 
+## Platform-Specific Behavior
+
+| Feature | macOS | Windows | Linux |
+|---------|-------|---------|-------|
+| Shell | zsh/bash | PowerShell/cmd | bash/sh |
+| tmux integration | Yes | Yes (via WSL) | Yes |
+| LaunchAgent auto-start | Yes | No | No (use systemd) |
+
+**Windows Notes:**
+- Requires Windows 10 version 1809+ (ConPTY support)
+- PowerShell is used by default, falls back to cmd.exe
+- tmux works through WSL (Windows Subsystem for Linux)
+- Install WSL: `wsl --install` (PowerShell as Admin)
+- Install tmux in WSL: `sudo apt install tmux`
+- UI shows "tmux (WSL)" badge when using WSL tmux
+
 ## Known Issues
 
 - **node-pty spawn-helper**: Requires `chmod +x` on macOS. Handled in postinstall and install.sh.
 - **ngrok session limit**: Free tier allows 1 tunnel. Use `--cloudflare` as alternative.
+- **Windows**: node-pty may require Visual Studio Build Tools for native compilation.
 
 ## Testing Checklist
 

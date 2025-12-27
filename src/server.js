@@ -9,6 +9,7 @@ import { SessionManager } from './session-manager.js';
 import { TokenAuth, RateLimiter } from './auth.js';
 import { TunnelManager, CloudflareTunnel } from './tunnel.js';
 import { CommandManager } from './commands.js';
+import { runSetup } from './setup.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -507,6 +508,12 @@ function displayAccessInfo(tunnelUrl, token, isRegenerated = false) {
 
 // Start server and tunnel
 async function start() {
+  // Run setup check unless --skip-setup flag is passed
+  const skipSetup = process.argv.includes('--skip-setup');
+  if (!skipSetup) {
+    await runSetup();
+  }
+
   server.listen(PORT, async () => {
     console.log('');
     console.log('╔═══════════════════════════════════════════════════════════╗');

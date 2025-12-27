@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="120" height="120">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#da7756;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#c45a3a;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+
+  <!-- Background circle -->
+  <circle cx="60" cy="60" r="56" fill="#191919" stroke="url(#grad)" stroke-width="3"/>
+
+  <!-- Terminal prompt symbol > -->
+  <path d="M30 45 L50 60 L30 75"
+        fill="none"
+        stroke="url(#grad)"
+        stroke-width="6"
+        stroke-linecap="round"
+        stroke-linejoin="round"/>
+
+  <!-- Cursor line -->
+  <rect x="58" y="54" width="28" height="12" rx="2" fill="url(#grad)">
+    <animate attributeName="opacity" values="1;0.3;1" dur="1.2s" repeatCount="indefinite"/>
+  </rect>
+
+  <!-- Connection dots -->
+  <circle cx="95" cy="35" r="4" fill="#da7756" opacity="0.6"/>
+  <circle cx="100" cy="50" r="3" fill="#da7756" opacity="0.4"/>
+  <circle cx="98" cy="65" r="2" fill="#da7756" opacity="0.3"/>
+</svg>

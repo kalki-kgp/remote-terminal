@@ -408,9 +408,19 @@ class RemoteTerminal {
   updateTmuxStatus(info) {
     this.tmuxAvailable = info.available;
     this.tmuxSessions = info.sessions || [];
+    this.tmuxUseWSL = info.useWSL || false;
+    this.wslAvailable = info.wslAvailable || false;
+    this.wslTmuxMissing = info.wslTmuxMissing || false;
 
     const badge = document.getElementById('tmuxBadge');
     badge.classList.toggle('unavailable', !this.tmuxAvailable);
+
+    // Update badge text if using WSL
+    if (this.tmuxAvailable && this.tmuxUseWSL) {
+      badge.textContent = 'tmux (WSL)';
+    } else {
+      badge.textContent = 'tmux';
+    }
 
     this.renderTmuxSessions();
   }
@@ -419,7 +429,36 @@ class RemoteTerminal {
     const container = document.getElementById('tmuxSessionsList');
 
     if (!this.tmuxAvailable) {
-      container.innerHTML = '<div class="no-sessions">tmux not installed</div>';
+      // Check if we're on Windows and can help user set up tmux
+      if (this.wslTmuxMissing) {
+        // WSL exists but tmux not installed
+        container.innerHTML = `
+          <div class="no-sessions" style="text-align: left; padding: 12px;">
+            <strong>tmux not installed in WSL</strong><br><br>
+            Run this in WSL to install:
+            <code style="display: block; background: var(--bg-tertiary); padding: 8px; margin-top: 8px; border-radius: 4px; font-size: 12px;">
+              sudo apt update && sudo apt install tmux
+            </code>
+          </div>
+        `;
+      } else if (this.wslAvailable === false && navigator.platform?.includes('Win')) {
+        // Windows without WSL
+        container.innerHTML = `
+          <div class="no-sessions" style="text-align: left; padding: 12px;">
+            <strong>Install WSL for tmux support</strong><br><br>
+            Run in PowerShell (as Admin):
+            <code style="display: block; background: var(--bg-tertiary); padding: 8px; margin-top: 8px; border-radius: 4px; font-size: 12px;">
+              wsl --install
+            </code>
+            <br>Then restart and install tmux:
+            <code style="display: block; background: var(--bg-tertiary); padding: 8px; margin-top: 8px; border-radius: 4px; font-size: 12px;">
+              sudo apt install tmux
+            </code>
+          </div>
+        `;
+      } else {
+        container.innerHTML = '<div class="no-sessions">tmux not installed</div>';
+      }
       return;
     }
 

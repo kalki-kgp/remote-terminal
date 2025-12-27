@@ -671,22 +671,20 @@
 
     /* Favorites Panel */
     .favorites-btn {
-      background: var(--bg-tertiary);
-      border: 1px solid var(--border-color);
-      border-radius: 8px;
-      color: var(--text-primary);
-      padding: 6px 12px;
-      font-size: 14px;
+      background: none;
+      border: none;
+      color: var(--text-secondary);
+      padding: 8px;
+      font-size: 18px;
       cursor: pointer;
       display: flex;
       align-items: center;
       gap: 6px;
-      transition: all 0.15s ease;
+      transition: color 0.15s ease;
     }
 
     .favorites-btn:hover {
-      background: var(--bg-hover);
-      border-color: var(--accent);
+      color: var(--accent);
     }
 
     .favorites-panel {
@@ -970,14 +968,8 @@
         width: 100%;
         right: -100%;
       }
-      .favorites-btn {
-        padding: 8px 10px;
-      }
       .favorites-btn .favorites-text {
         display: none;
-      }
-      .favorites-btn .favorites-icon {
-        font-size: 16px;
       }
     }
   </style>
@@ -1005,7 +997,7 @@
           <span class="favorites-icon">&#9733;</span>
           <span class="favorites-text">Favorites</span>
         </button>
-        <span class="tmux-badge unavailable" id="tmuxBadge">tmux</span>
+        
         <div class="status">
           <span class="status-dot" id="statusDot"></span>
           <span id="statusText">Disconnected</span>

@@ -1,19 +1,55 @@
 {
-  "name": "connect",
+  "name": "terminal-connect",
   "version": "1.0.0",
-  "description": "Access your Mac terminal from anywhere via browser",
+  "description": "Access your terminal from anywhere via browser. Self-hosted, cross-platform (macOS, Windows, Linux), with tmux integration.",
   "main": "src/server.js",
   "type": "module",
+  "bin": {
+    "connect": "./bin/connect.js",
+    "terminal-connect": "./bin/connect.js"
+  },
   "scripts": {
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
-    "postinstall": "chmod +x node_modules/node-pty/prebuilds/darwin-*/spawn-helper 2>/dev/null || true"
+    "postinstall": "node scripts/postinstall.js"
   },
-  "keywords": ["terminal", "remote", "pty", "xterm", "connect"],
+  "files": [
+    "bin/",
+    "src/",
+    "public/",
+    "scripts/postinstall.js"
+  ],
+  "keywords": [
+    "terminal",
+    "remote",
+    "pty",
+    "xterm",
+    "ssh",
+    "tmux",
+    "cli",
+    "browser",
+    "mobile",
+    "self-hosted",
+    "cross-platform"
+  ],
+  "author": "kalki-kgp",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kalki-kgp/remote-terminal.git"
+  },
+  "homepage": "https://github.com/kalki-kgp/remote-terminal#readme",
+  "bugs": {
+    "url": "https://github.com/kalki-kgp/remote-terminal/issues"
+  },
   "engines": {
     "node": ">=18.0.0"
   },
+  "os": [
+    "darwin",
+    "linux",
+    "win32"
+  ],
   "dependencies": {
     "express": "^4.18.2",
     "ws": "^8.16.0",

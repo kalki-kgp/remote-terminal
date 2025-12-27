@@ -126,24 +126,48 @@ export class SessionManager {
     const terminalId = nanoid(12);
     const terminalName = name || `Terminal ${visitor.terminals.size + 1}`;
 
-    // Find available shell
-    const shells = ['/bin/zsh', '/bin/bash', '/bin/sh'];
-    let shell = process.env.SHELL;
-    if (!shell || !fs.existsSync(shell)) {
-      shell = shells.find(s => fs.existsSync(s)) || '/bin/sh';
+    const isWindows = process.platform === 'win32';
+    let shell;
+    let shellArgs = [];
+
+    if (isWindows) {
+      // Windows: prefer PowerShell, fall back to cmd
+      shell = process.env.COMSPEC || 'cmd.exe';
+      // Try PowerShell if available
+      const psPath = process.env.SystemRoot
+        ? `${process.env.SystemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`
+        : 'powershell.exe';
+      if (fs.existsSync(psPath)) {
+        shell = psPath;
+        shellArgs = ['-NoLogo'];
+      }
+    } else {
+      // Unix: find available shell
+      const shells = ['/bin/zsh', '/bin/bash', '/bin/sh'];
+      shell = process.env.SHELL;
+      if (!shell || !fs.existsSync(shell)) {
+        shell = shells.find(s => fs.existsSync(s)) || '/bin/sh';
+      }
     }
 
     const env = {
       TERM: 'xterm-256color',
       COLORTERM: 'truecolor',
       HOME: os.homedir(),
-      PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin',
+      PATH: process.env.PATH || (isWindows ? process.env.Path : '/usr/local/bin:/usr/bin:/bin'),
       SHELL: shell,
-      USER: process.env.USER || os.userInfo().username,
+      USER: process.env.USER || process.env.USERNAME || os.userInfo().username,
       LANG: process.env.LANG || 'en_US.UTF-8',
     };
 
-    const ptyProcess = pty.spawn(shell, [], {
+    // Windows-specific env vars
+    if (isWindows) {
+      env.USERPROFILE = os.homedir();
+      env.HOMEDRIVE = process.env.HOMEDRIVE || 'C:';
+      env.HOMEPATH = process.env.HOMEPATH || '\\Users\\' + env.USER;
+    }
+
+    const ptyProcess = pty.spawn(shell, shellArgs, {
       name: 'xterm-256color',
       cols: 80,
       rows: 24,
