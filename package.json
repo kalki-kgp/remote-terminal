@@ -1,6 +1,6 @@
 {
   "name": "terminal-connect",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Access your terminal from anywhere via browser. Self-hosted, cross-platform (macOS, Windows, Linux), with tmux integration.",
   "main": "src/server.js",
   "type": "module",
