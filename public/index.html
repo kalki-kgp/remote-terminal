@@ -540,6 +540,92 @@
       color: #fff;
     }
 
+    /* Keyboard shortcuts bar */
+    .keyboard-bar {
+      display: none;
+      background: var(--bg-secondary);
+      border-top: 1px solid var(--border-color);
+      padding: 8px;
+      gap: 6px;
+      flex-shrink: 0;
+      overflow-x: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .keyboard-bar.show {
+      display: flex;
+    }
+
+    .key-btn {
+      flex-shrink: 0;
+      min-width: 44px;
+      height: 40px;
+      padding: 0 12px;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      color: var(--text-primary);
+      font-size: 13px;
+      font-weight: 500;
+      font-family: 'SF Mono', Monaco, monospace;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.1s ease;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .key-btn:active {
+      background: var(--accent);
+      border-color: var(--accent);
+      transform: scale(0.95);
+    }
+
+    .key-btn.ctrl-active {
+      background: var(--accent);
+      border-color: var(--accent);
+    }
+
+    .key-btn.wide {
+      min-width: 60px;
+    }
+
+    .key-btn .key-label {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-right: 4px;
+    }
+
+    /* Swipe indicator */
+    .swipe-indicator {
+      position: fixed;
+      top: 50%;
+      transform: translateY(-50%);
+      padding: 12px 16px;
+      background: rgba(0, 0, 0, 0.8);
+      border-radius: 12px;
+      color: var(--text-primary);
+      font-size: 14px;
+      font-weight: 500;
+      z-index: 300;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.2s ease;
+    }
+
+    .swipe-indicator.left {
+      left: 20px;
+    }
+
+    .swipe-indicator.right {
+      right: 20px;
+    }
+
+    .swipe-indicator.show {
+      opacity: 1;
+    }
+
     /* Mobile optimizations */
     @media (max-width: 768px) {
       .header { padding: 10px 12px; }
@@ -548,6 +634,7 @@
       .tab { padding: 10px 12px; font-size: 12px; }
       .tab-close { opacity: 1; }
       .terminal-pane { padding: 4px; }
+      .keyboard-bar { display: flex; }
     }
 
     @media (min-width: 769px) {
@@ -595,7 +682,26 @@
     </div>
 
     <div class="terminals-wrapper" id="terminalsWrapper"></div>
+
+    <!-- Mobile keyboard shortcuts bar -->
+    <div class="keyboard-bar" id="keyboardBar">
+      <button class="key-btn" data-key="ctrl" id="ctrlKey">Ctrl</button>
+      <button class="key-btn" data-key="up">↑</button>
+      <button class="key-btn" data-key="down">↓</button>
+      <button class="key-btn" data-key="left">←</button>
+      <button class="key-btn" data-key="right">→</button>
+      <button class="key-btn wide" data-key="tab">Tab</button>
+      <button class="key-btn wide" data-key="esc">Esc</button>
+      <button class="key-btn" data-action="ctrl-c">C</button>
+      <button class="key-btn" data-action="ctrl-d">D</button>
+      <button class="key-btn" data-action="ctrl-z">Z</button>
+      <button class="key-btn" data-action="ctrl-l">L</button>
+    </div>
   </div>
+
+  <!-- Swipe indicators -->
+  <div class="swipe-indicator left" id="swipeLeft">← Previous</div>
+  <div class="swipe-indicator right" id="swipeRight">Next →</div>
 
   <!-- New Terminal Modal -->
   <div class="modal-overlay" id="modalOverlay">

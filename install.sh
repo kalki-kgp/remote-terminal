@@ -156,14 +156,134 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     echo -e "${GREEN}✓ cloudflared installed${NC}"
 fi
 
+# Optional: Setup auto-start on boot
+echo ""
+read -p "Enable auto-start on boot (LaunchAgent)? (y/n) " -n 1 -r
+echo
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+    echo -e "${BLUE}Setting up LaunchAgent...${NC}"
+
+    # Create logs directory
+    mkdir -p "$INSTALL_DIR/logs"
+
+    # Find node path
+    NODE_PATH=$(which node)
+
+    # Copy and configure plist
+    PLIST_SRC="$SCRIPT_DIR/scripts/com.remote-terminal.plist"
+    PLIST_DEST="$HOME/Library/LaunchAgents/com.remote-terminal.plist"
+
+    if [[ -f "$PLIST_SRC" ]]; then
+        # Replace placeholders
+        sed -e "s|INSTALL_PATH|$INSTALL_DIR|g" \
+            -e "s|HOME_PATH|$HOME|g" \
+            -e "s|/usr/local/bin/node|$NODE_PATH|g" \
+            "$PLIST_SRC" > "$PLIST_DEST"
+
+        # Load the LaunchAgent
+        launchctl unload "$PLIST_DEST" 2>/dev/null || true
+        launchctl load "$PLIST_DEST"
+
+        echo -e "${GREEN}✓ LaunchAgent installed and loaded${NC}"
+        echo -e "${YELLOW}  Server will start automatically on login${NC}"
+        echo -e "${YELLOW}  Logs: $INSTALL_DIR/logs/${NC}"
+    else
+        echo -e "${RED}Warning: LaunchAgent plist not found${NC}"
+    fi
+fi
+
+# Create daemon control script
+cat > "$INSTALL_DIR/remote-terminal-ctl" << 'CTLEOF'
+#!/bin/bash
+
+# Remote Terminal Control Script
+
+PLIST="$HOME/Library/LaunchAgents/com.remote-terminal.plist"
+INSTALL_DIR="$HOME/.remote-terminal"
+
+case "$1" in
+    start)
+        if [[ -f "$PLIST" ]]; then
+            launchctl load "$PLIST" 2>/dev/null
+            echo "Remote Terminal started (daemon mode)"
+        else
+            echo "LaunchAgent not installed. Run: remote-terminal"
+        fi
+        ;;
+    stop)
+        if [[ -f "$PLIST" ]]; then
+            launchctl unload "$PLIST" 2>/dev/null
+            echo "Remote Terminal stopped"
+        else
+            pkill -f "node.*remote-terminal" 2>/dev/null
+            echo "Remote Terminal stopped"
+        fi
+        ;;
+    restart)
+        $0 stop
+        sleep 1
+        $0 start
+        ;;
+    status)
+        if pgrep -f "node.*remote-terminal" > /dev/null; then
+            echo "Remote Terminal is running"
+            pgrep -f "node.*remote-terminal"
+        else
+            echo "Remote Terminal is not running"
+        fi
+        ;;
+    logs)
+        if [[ -f "$INSTALL_DIR/logs/stdout.log" ]]; then
+            tail -f "$INSTALL_DIR/logs/stdout.log" "$INSTALL_DIR/logs/stderr.log"
+        else
+            echo "No logs found. Server may not be running as daemon."
+        fi
+        ;;
+    enable)
+        if [[ -f "$PLIST" ]]; then
+            launchctl load "$PLIST"
+            echo "Auto-start enabled"
+        else
+            echo "LaunchAgent not installed. Re-run install.sh"
+        fi
+        ;;
+    disable)
+        if [[ -f "$PLIST" ]]; then
+            launchctl unload "$PLIST"
+            echo "Auto-start disabled"
+        fi
+        ;;
+    *)
+        echo "Usage: remote-terminal-ctl {start|stop|restart|status|logs|enable|disable}"
+        echo ""
+        echo "Commands:"
+        echo "  start    - Start the server (daemon mode)"
+        echo "  stop     - Stop the server"
+        echo "  restart  - Restart the server"
+        echo "  status   - Check if server is running"
+        echo "  logs     - Tail the server logs"
+        echo "  enable   - Enable auto-start on login"
+        echo "  disable  - Disable auto-start on login"
+        exit 1
+        ;;
+esac
+CTLEOF
+
+chmod +x "$INSTALL_DIR/remote-terminal-ctl"
+sudo ln -sf "$INSTALL_DIR/remote-terminal-ctl" /usr/local/bin/remote-terminal-ctl
+
 echo ""
 echo -e "${GREEN}╔═══════════════════════════════════════════════════════════╗${NC}"
 echo -e "${GREEN}║           ✅ Installation Complete!                        ║${NC}"
 echo -e "${GREEN}╠═══════════════════════════════════════════════════════════╣${NC}"
 echo -e "${GREEN}║                                                           ║${NC}"
-echo -e "${GREEN}║  To start the remote terminal server, run:                ║${NC}"
+echo -e "${GREEN}║  To start the remote terminal server:                     ║${NC}"
 echo -e "${GREEN}║                                                           ║${NC}"
-echo -e "${GREEN}║    remote-terminal                                        ║${NC}"
+echo -e "${GREEN}║    remote-terminal          (foreground)                  ║${NC}"
+echo -e "${GREEN}║    remote-terminal-ctl start (daemon)                     ║${NC}"
+echo -e "${GREEN}║                                                           ║${NC}"
+echo -e "${GREEN}║  Daemon control:                                          ║${NC}"
+echo -e "${GREEN}║    remote-terminal-ctl status|stop|restart|logs           ║${NC}"
 echo -e "${GREEN}║                                                           ║${NC}"
 echo -e "${GREEN}║  Options:                                                 ║${NC}"
 echo -e "${GREEN}║    --cloudflare     Use Cloudflare Tunnel                 ║${NC}"

@@ -4,11 +4,14 @@ Access your Mac terminal from anywhere via browser. Built for Apple Silicon Macs
 
 ## Features
 
+- **Remote Access** - Access your terminal from phone, tablet, or any browser
 - **QR Code Access** - Scan QR code from terminal to connect instantly
 - **Multiple Terminals** - Tab-based interface, create unlimited terminals
 - **Session Persistence** - Reconnect to existing sessions, output is preserved
-- **Secure** - One-time token authentication, HTTPS via tunnel
-- **Mobile Friendly** - Optimized UI for phones and tablets
+- **tmux Integration** - Attach to existing tmux sessions
+- **Mobile Optimized** - Swipe gestures, on-screen keyboard, haptic feedback
+- **Secure** - Token auth with expiration, rate limiting, auto-rotation
+- **Auto-start** - Optional LaunchAgent for boot persistence
 
 ## Requirements
 
@@ -16,7 +19,21 @@ Access your Mac terminal from anywhere via browser. Built for Apple Silicon Macs
 - Node.js 18+
 - ngrok or cloudflared (for remote access)
 
-## Installation
+## Quick Start
+
+```bash
+# Clone and install
+git clone https://github.com/anthropics/remote-terminal.git
+cd remote-terminal
+npm install
+
+# Start the server
+npm start
+```
+
+Scan the QR code or open the URL to connect.
+
+## Installation (System-wide)
 
 ```bash
 ./install.sh
@@ -27,56 +44,79 @@ This will:
 2. Install the application to `~/.remote-terminal`
 3. Create the `remote-terminal` command
 4. Optionally install cloudflared
+5. Optionally set up auto-start on boot
 
 ## Usage
 
-### Start the server
-
+### Foreground Mode
 ```bash
 remote-terminal
 ```
 
-This will:
-1. Start the local server on port 3000
-2. Create a tunnel (ngrok by default)
-3. Display QR code and access URL
+### Daemon Mode
+```bash
+remote-terminal-ctl start    # Start as background daemon
+remote-terminal-ctl stop     # Stop the daemon
+remote-terminal-ctl restart  # Restart
+remote-terminal-ctl status   # Check if running
+remote-terminal-ctl logs     # Tail the logs
+remote-terminal-ctl enable   # Enable auto-start on login
+remote-terminal-ctl disable  # Disable auto-start
+```
 
 ### Options
-
 ```bash
 remote-terminal --cloudflare          # Use Cloudflare Tunnel instead of ngrok
 remote-terminal --ngrok-token TOKEN   # Use authenticated ngrok
 remote-terminal --port 8080           # Use custom port
 ```
 
-### Access from phone
+## Mobile Features
 
-1. **Scan the QR code** displayed in terminal, OR
-2. Copy the URL and open in browser
-3. Start using your terminal!
+### Swipe Gestures
+Swipe left/right on the terminal area to switch between tabs.
 
-### Multiple Terminals
+### Keyboard Shortcuts Bar
+On mobile, a keyboard bar appears at the bottom with:
+- **Ctrl** - Toggle Ctrl modifier (tap, then tap a letter)
+- **C/D/Z/L** - Quick Ctrl+C, Ctrl+D, Ctrl+Z, Ctrl+L
+- **Tab/Esc** - Tab and Escape keys
+- **Arrows** - Navigation keys (↑↓←→)
 
-- Click **+** button to create new terminal
-- Click tabs to switch between terminals
-- Double-click tab name to rename
-- Click **×** on tab to close terminal
+### Customizing Keyboard Bar
 
-### Session Persistence
+Edit `public/index.html` around line 687:
 
-- Sessions persist even when you disconnect
-- Reconnecting restores your terminals and output
-- Session ID stored in browser localStorage
+```html
+<div class="keyboard-bar" id="keyboardBar">
+  <button class="key-btn" data-key="ctrl" id="ctrlKey">Ctrl</button>
+  <button class="key-btn" data-action="ctrl-c">C</button>
+  <button class="key-btn" data-action="ctrl-d">D</button>
+  <!-- Reorder or add buttons here -->
+</div>
+```
 
-## Endpoints
+**Button types:**
+- `data-action="ctrl-X"` - Sends Ctrl+X (e.g., `data-action="ctrl-c"`)
+- `data-key="KEY"` - Special keys: `tab`, `esc`, `up`, `down`, `left`, `right`
 
-| Endpoint | Description |
-|----------|-------------|
-| `/` | Terminal UI |
-| `/qr` | QR code image (PNG) |
-| `/health` | Server health check |
+**Add new Ctrl shortcuts:**
+```html
+<button class="key-btn" data-action="ctrl-a">A</button>  <!-- Ctrl+A -->
+<button class="key-btn" data-action="ctrl-r">R</button>  <!-- Ctrl+R (reverse search) -->
+```
 
 ## Configuration
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | 3000 | Local server port |
+| `TUNNEL` | ngrok | Tunnel provider (ngrok/cloudflare) |
+| `NGROK_AUTHTOKEN` | - | ngrok authentication token |
+| `TOKEN_LIFETIME` | 86400000 | Token lifetime in ms (24h) |
+| `TOKEN_ROTATION` | 43200000 | Token rotation interval in ms (12h) |
 
 ### ngrok (default)
 
@@ -95,42 +135,64 @@ brew install cloudflared
 remote-terminal --cloudflare
 ```
 
+## Security
+
+- **Token Expiration** - Tokens expire after 24 hours (configurable)
+- **Auto-Rotation** - Tokens rotate every 12 hours with 5-minute grace period
+- **Rate Limiting** - 5 failed attempts per 15 minutes, then 30-minute block
+- **Fresh Tokens** - New token generated on each server start
+- **HTTPS** - Enforced via tunnel
+- **Isolated Sessions** - Each visitor has separate terminal sessions
+
+**Important:** Never share your access URL/token publicly.
+
+## API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/` | GET | Terminal UI |
+| `/qr` | GET | QR code image (PNG) |
+| `/health` | GET | Server health check |
+| `/api/token-info` | GET | Token expiration info (requires token) |
+| `/api/rotate-token` | POST | Force token rotation (requires token) |
+
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────┐
 │  Mac                                    │
-│  ├── Express Server                     │
+│  ├── Express Server (port 3000)         │
 │  │   ├── Static files (UI)              │
 │  │   ├── WebSocket (terminal I/O)       │
-│  │   └── QR code generation             │
+│  │   └── Token auth + rate limiting     │
 │  ├── Session Manager                    │
 │  │   ├── Multiple PTY sessions          │
-│  │   └── Output buffering               │
+│  │   ├── tmux integration               │
+│  │   └── Output buffering (50KB)        │
 │  └── Tunnel (ngrok/cloudflare)          │
 └─────────────────────────────────────────┘
               │
               ▼
       Phone/Browser
-      ├── Tab-based UI
+      ├── Claude Code styled UI
       ├── xterm.js terminals
-      └── Session reconnection
+      ├── Swipe gestures
+      └── On-screen keyboard
 ```
-
-## Security
-
-- Each server start generates a new one-time token
-- Token required for WebSocket connections
-- HTTPS enforced via tunnel
-- Sessions isolated per visitor
-- Output buffer limited to 50KB per terminal
-
-**Important:** Never share your access URL/token publicly.
 
 ## Uninstall
 
 ```bash
 ./uninstall.sh
+```
+
+Or manually:
+```bash
+remote-terminal-ctl stop
+launchctl unload ~/Library/LaunchAgents/com.remote-terminal.plist
+rm -rf ~/.remote-terminal
+sudo rm /usr/local/bin/remote-terminal /usr/local/bin/remote-terminal-ctl
+rm ~/Library/LaunchAgents/com.remote-terminal.plist
 ```
 
 ## Troubleshooting
@@ -140,6 +202,7 @@ remote-terminal --cloudflare
 Free ngrok allows 1 session. Either:
 - Close other ngrok instances: `pkill ngrok`
 - Use Cloudflare instead: `remote-terminal --cloudflare`
+- Get ngrok auth token for multiple sessions
 
 ### "Port already in use"
 
@@ -150,3 +213,11 @@ lsof -ti:3000 | xargs kill -9
 ### Session not restoring
 
 Clear browser localStorage and reconnect with fresh token.
+
+### Keyboard bar not showing
+
+The keyboard bar only appears on mobile (screen width < 768px). On desktop, use your physical keyboard.
+
+## License
+
+MIT

@@ -12,6 +12,13 @@ class RemoteTerminal {
     this.tmuxAvailable = false;
     this.tmuxSessions = [];
 
+    // Mobile UX state
+    this.ctrlPressed = false;
+    this.touchStartX = 0;
+    this.touchStartY = 0;
+    this.isSwiping = false;
+    this.swipeThreshold = 80;
+
     this.init();
   }
 
@@ -66,6 +73,154 @@ class RemoteTerminal {
     });
 
     window.addEventListener('resize', () => this.fitActiveTerminal());
+
+    // Mobile keyboard shortcuts
+    this.setupKeyboardBar();
+
+    // Swipe gestures for tab switching
+    this.setupSwipeGestures();
+  }
+
+  // Haptic feedback helper
+  haptic(style = 'light') {
+    if ('vibrate' in navigator) {
+      const patterns = {
+        light: 10,
+        medium: 20,
+        heavy: 30,
+      };
+      navigator.vibrate(patterns[style] || 10);
+    }
+  }
+
+  // Mobile keyboard shortcuts
+  setupKeyboardBar() {
+    const bar = document.getElementById('keyboardBar');
+    const ctrlKey = document.getElementById('ctrlKey');
+
+    bar.querySelectorAll('.key-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        this.haptic('light');
+
+        const key = btn.dataset.key;
+        const action = btn.dataset.action;
+
+        if (key === 'ctrl') {
+          this.ctrlPressed = !this.ctrlPressed;
+          ctrlKey.classList.toggle('ctrl-active', this.ctrlPressed);
+          return;
+        }
+
+        const terminal = this.terminals.get(this.activeTerminalId);
+        if (!terminal) return;
+
+        let sequence = '';
+
+        if (action) {
+          // Ctrl+key combinations
+          const char = action.split('-')[1].toUpperCase();
+          sequence = String.fromCharCode(char.charCodeAt(0) - 64);
+          this.haptic('medium');
+        } else if (key) {
+          if (this.ctrlPressed) {
+            // Ctrl modifier active
+            const charCode = key.toUpperCase().charCodeAt(0);
+            if (charCode >= 65 && charCode <= 90) {
+              sequence = String.fromCharCode(charCode - 64);
+            }
+          } else {
+            // Regular keys
+            const keyMap = {
+              'tab': '\t',
+              'esc': '\x1b',
+              'up': '\x1b[A',
+              'down': '\x1b[B',
+              'left': '\x1b[D',
+              'right': '\x1b[C',
+            };
+            sequence = keyMap[key] || '';
+          }
+        }
+
+        if (sequence) {
+          this.send({ type: 'input', terminalId: this.activeTerminalId, data: sequence });
+          terminal.terminal.focus();
+        }
+
+        // Reset Ctrl after use
+        if (this.ctrlPressed && key !== 'ctrl') {
+          this.ctrlPressed = false;
+          ctrlKey.classList.remove('ctrl-active');
+        }
+      });
+    });
+  }
+
+  // Swipe gestures for tab switching
+  setupSwipeGestures() {
+    const wrapper = document.getElementById('terminalsWrapper');
+    const leftIndicator = document.getElementById('swipeLeft');
+    const rightIndicator = document.getElementById('swipeRight');
+
+    wrapper.addEventListener('touchstart', (e) => {
+      if (e.touches.length !== 1) return;
+      this.touchStartX = e.touches[0].clientX;
+      this.touchStartY = e.touches[0].clientY;
+      this.isSwiping = false;
+    }, { passive: true });
+
+    wrapper.addEventListener('touchmove', (e) => {
+      if (e.touches.length !== 1) return;
+
+      const deltaX = e.touches[0].clientX - this.touchStartX;
+      const deltaY = e.touches[0].clientY - this.touchStartY;
+
+      // Only horizontal swipes
+      if (Math.abs(deltaX) > Math.abs(deltaY) * 1.5 && Math.abs(deltaX) > 30) {
+        this.isSwiping = true;
+
+        // Show indicator
+        if (deltaX > this.swipeThreshold) {
+          leftIndicator.classList.add('show');
+          rightIndicator.classList.remove('show');
+        } else if (deltaX < -this.swipeThreshold) {
+          rightIndicator.classList.add('show');
+          leftIndicator.classList.remove('show');
+        } else {
+          leftIndicator.classList.remove('show');
+          rightIndicator.classList.remove('show');
+        }
+      }
+    }, { passive: true });
+
+    wrapper.addEventListener('touchend', (e) => {
+      leftIndicator.classList.remove('show');
+      rightIndicator.classList.remove('show');
+
+      if (!this.isSwiping) return;
+
+      const deltaX = e.changedTouches[0].clientX - this.touchStartX;
+
+      if (Math.abs(deltaX) > this.swipeThreshold) {
+        this.haptic('medium');
+
+        const terminalIds = Array.from(this.terminals.keys());
+        const currentIndex = terminalIds.indexOf(this.activeTerminalId);
+
+        if (deltaX > 0 && currentIndex > 0) {
+          // Swipe right - previous tab
+          this.switchTerminal(terminalIds[currentIndex - 1]);
+          this.send({ type: 'switch-terminal', terminalId: terminalIds[currentIndex - 1] });
+        } else if (deltaX < 0 && currentIndex < terminalIds.length - 1) {
+          // Swipe left - next tab
+          this.switchTerminal(terminalIds[currentIndex + 1]);
+          this.send({ type: 'switch-terminal', terminalId: terminalIds[currentIndex + 1] });
+        }
+      }
+
+      this.isSwiping = false;
+    }, { passive: true });
   }
 
   openModal() {

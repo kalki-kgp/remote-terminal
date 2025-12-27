@@ -6,7 +6,7 @@ import { dirname, join } from 'path';
 import qrcode from 'qrcode-terminal';
 import QRCode from 'qrcode';
 import { SessionManager } from './session-manager.js';
-import { TokenAuth } from './auth.js';
+import { TokenAuth, RateLimiter } from './auth.js';
 import { TunnelManager, CloudflareTunnel } from './tunnel.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -16,13 +16,24 @@ const __dirname = dirname(__filename);
 const PORT = process.env.PORT || 3000;
 const TUNNEL_TYPE = process.env.TUNNEL || 'ngrok';
 const NGROK_TOKEN = process.env.NGROK_AUTHTOKEN || null;
+const TOKEN_LIFETIME = parseInt(process.env.TOKEN_LIFETIME) || 24 * 60 * 60 * 1000; // 24h
+const TOKEN_ROTATION = parseInt(process.env.TOKEN_ROTATION) || 12 * 60 * 60 * 1000; // 12h
 
 // Initialize components
 const app = express();
 const server = createServer(app);
 const wss = new WebSocketServer({ server });
 const sessionManager = new SessionManager();
-const auth = new TokenAuth();
+const auth = new TokenAuth({
+  tokenLifetime: TOKEN_LIFETIME,
+  rotationInterval: TOKEN_ROTATION,
+  autoRotate: true,
+});
+const rateLimiter = new RateLimiter({
+  maxAttempts: 5,
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  blockDuration: 30 * 60 * 1000, // 30 minutes
+});
 
 // Store WebSocket connections per visitor
 const wsConnections = new Map(); // visitorId -> Set<ws>
@@ -36,6 +47,28 @@ app.get('/health', (req, res) => {
     status: 'ok',
     timestamp: new Date().toISOString(),
     stats: sessionManager.getStats(),
+  });
+});
+
+// Token info endpoint (for authenticated clients to check token status)
+app.get('/api/token-info', (req, res) => {
+  const token = req.query.token || req.headers.authorization?.replace('Bearer ', '');
+  if (!auth.validateToken(token)) {
+    return res.status(401).json({ error: 'Invalid token' });
+  }
+  res.json(auth.getTokenInfo());
+});
+
+// Admin endpoint to rotate token (requires current valid token)
+app.post('/api/rotate-token', (req, res) => {
+  const token = req.query.token || req.headers.authorization?.replace('Bearer ', '');
+  if (!auth.validateToken(token)) {
+    return res.status(401).json({ error: 'Invalid token' });
+  }
+  const newToken = auth.rotateToken();
+  res.json({
+    message: 'Token rotated successfully',
+    ...auth.getTokenInfo(),
   });
 });
 
@@ -74,18 +107,43 @@ function broadcastToVisitor(visitorId, message) {
   }
 }
 
+// Helper to get client IP
+function getClientIP(req) {
+  return req.headers['x-forwarded-for']?.split(',')[0]?.trim() ||
+         req.headers['x-real-ip'] ||
+         req.socket.remoteAddress ||
+         'unknown';
+}
+
 // WebSocket connection handling
 wss.on('connection', (ws, req) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const token = url.searchParams.get('token');
   const reconnectVisitorId = url.searchParams.get('visitorId');
+  const clientIP = getClientIP(req);
+
+  // Check rate limiting
+  const rateCheck = rateLimiter.isAllowed(clientIP);
+  if (!rateCheck.allowed) {
+    console.log(`[WS] Rate limited: ${clientIP} (retry after ${rateCheck.retryAfter}s)`);
+    ws.close(4029, JSON.stringify({
+      error: 'rate_limited',
+      retryAfter: rateCheck.retryAfter,
+      message: rateCheck.reason,
+    }));
+    return;
+  }
 
   // Validate token
   if (!auth.validateToken(token)) {
-    console.log(`[WS] Invalid token, closing connection`);
+    console.log(`[WS] Invalid token from ${clientIP}`);
+    rateLimiter.recordFailure(clientIP);
     ws.close(4001, 'Invalid token');
     return;
   }
+
+  // Successful auth - reset rate limit counter
+  rateLimiter.recordSuccess(clientIP);
 
   // Use existing visitor ID or create new one
   const visitorId = reconnectVisitorId || `visitor-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
