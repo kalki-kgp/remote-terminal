@@ -107,11 +107,12 @@ wss.on('connection', (ws, req) => {
     setupTerminalListeners(visitorId, terminal);
   }
 
-  // Send session info
+  // Send session info with tmux status
   ws.send(JSON.stringify({
     type: 'session',
     visitorId,
     terminals: sessionManager.getTerminals(visitorId),
+    tmux: sessionManager.getTmuxInfo(),
   }));
 
   // Send buffered output for reconnection
@@ -236,6 +237,70 @@ function handleMessage(visitorId, ws, msg) {
       ws.send(JSON.stringify({ type: 'pong' }));
       break;
 
+    // Tmux operations
+    case 'get-tmux-sessions':
+      ws.send(JSON.stringify({
+        type: 'tmux-sessions',
+        tmux: sessionManager.getTmuxInfo(),
+      }));
+      break;
+
+    case 'attach-tmux': {
+      try {
+        const tmuxTerminal = sessionManager.attachTmuxSession(visitorId, msg.sessionName);
+        setupTerminalListeners(visitorId, tmuxTerminal);
+        broadcastToVisitor(visitorId, {
+          type: 'terminal-created',
+          terminal: {
+            id: tmuxTerminal.id,
+            name: tmuxTerminal.name,
+            type: 'tmux',
+            tmuxSession: msg.sessionName,
+            createdAt: tmuxTerminal.createdAt,
+          },
+        });
+        // Refresh tmux sessions list
+        broadcastToVisitor(visitorId, {
+          type: 'tmux-sessions',
+          tmux: sessionManager.getTmuxInfo(),
+        });
+      } catch (error) {
+        ws.send(JSON.stringify({
+          type: 'error',
+          message: error.message,
+        }));
+      }
+      break;
+    }
+
+    case 'create-tmux': {
+      try {
+        const tmuxTerminal = sessionManager.createTmuxSession(visitorId, msg.sessionName);
+        setupTerminalListeners(visitorId, tmuxTerminal);
+        broadcastToVisitor(visitorId, {
+          type: 'terminal-created',
+          terminal: {
+            id: tmuxTerminal.id,
+            name: tmuxTerminal.name,
+            type: 'tmux',
+            tmuxSession: msg.sessionName,
+            createdAt: tmuxTerminal.createdAt,
+          },
+        });
+        // Refresh tmux sessions list
+        broadcastToVisitor(visitorId, {
+          type: 'tmux-sessions',
+          tmux: sessionManager.getTmuxInfo(),
+        });
+      } catch (error) {
+        ws.send(JSON.stringify({
+          type: 'error',
+          message: error.message,
+        }));
+      }
+      break;
+    }
+
     default:
       console.log(`[WS] Unknown message type: ${msg.type}`);
   }
@@ -295,10 +360,19 @@ async function start() {
     console.log('Full URL with token:');
     console.log(`  ${accessUrl}`);
     console.log('');
+    // Check tmux availability
+    const tmuxInfo = sessionManager.getTmuxInfo();
+
     console.log('╔═══════════════════════════════════════════════════════════╗');
     console.log('║  ⚠️  Keep this token secret!                               ║');
     console.log('║  ✨ Sessions persist across reconnections                 ║');
     console.log('║  📑 Multiple terminals supported (tabs)                   ║');
+    if (tmuxInfo.available) {
+      console.log('║  🔗 tmux integration enabled                               ║');
+      if (tmuxInfo.sessions.length > 0) {
+        console.log(`║     ${tmuxInfo.sessions.length} existing session(s) available                     ║`);
+      }
+    }
     console.log('╚═══════════════════════════════════════════════════════════╝');
     console.log('');
     console.log('Press Ctrl+C to stop the server');

@@ -1,23 +1,22 @@
-// Multi-terminal client with session persistence
+// Remote Terminal - Claude Code Style
 class RemoteTerminal {
   constructor() {
     this.ws = null;
     this.token = null;
     this.visitorId = null;
-    this.terminals = new Map(); // terminalId -> { terminal, fitAddon, element }
+    this.terminals = new Map();
     this.activeTerminalId = null;
     this.reconnectAttempts = 0;
     this.maxReconnectAttempts = 10;
     this.reconnectDelay = 1000;
+    this.tmuxAvailable = false;
+    this.tmuxSessions = [];
 
     this.init();
   }
 
   init() {
-    // Check for existing session
     this.visitorId = localStorage.getItem('visitorId');
-
-    // Check for token in URL
     const urlParams = new URLSearchParams(window.location.search);
     const urlToken = urlParams.get('token');
 
@@ -28,7 +27,6 @@ class RemoteTerminal {
       this.hideAuthOverlay();
       this.connect();
     } else {
-      // Try stored token
       const storedToken = localStorage.getItem('token');
       if (storedToken) {
         this.token = storedToken;
@@ -39,17 +37,44 @@ class RemoteTerminal {
       }
     }
 
-    // Setup auth form
+    this.setupEventListeners();
+  }
+
+  setupEventListeners() {
+    // Auth
     document.getElementById('connectBtn').addEventListener('click', () => this.handleAuth());
     document.getElementById('tokenInput').addEventListener('keypress', (e) => {
       if (e.key === 'Enter') this.handleAuth();
     });
 
-    // New tab button
-    document.getElementById('newTabBtn').addEventListener('click', () => this.createNewTerminal());
+    // Modal
+    document.getElementById('newTabBtn').addEventListener('click', () => this.openModal());
+    document.getElementById('modalClose').addEventListener('click', () => this.closeModal());
+    document.getElementById('modalOverlay').addEventListener('click', (e) => {
+      if (e.target.id === 'modalOverlay') this.closeModal();
+    });
 
-    // Handle window resize
+    // Actions
+    document.getElementById('newShellBtn').addEventListener('click', () => {
+      this.createNewTerminal();
+      this.closeModal();
+    });
+
+    document.getElementById('newTmuxBtn').addEventListener('click', () => {
+      this.createNewTmuxSession();
+      this.closeModal();
+    });
+
     window.addEventListener('resize', () => this.fitActiveTerminal());
+  }
+
+  openModal() {
+    document.getElementById('modalOverlay').classList.add('show');
+    this.send({ type: 'get-tmux-sessions' });
+  }
+
+  closeModal() {
+    document.getElementById('modalOverlay').classList.remove('show');
   }
 
   showAuthOverlay() {
@@ -62,20 +87,24 @@ class RemoteTerminal {
   }
 
   showAuthError(message) {
-    const errorEl = document.getElementById('authError');
-    errorEl.textContent = message;
-    errorEl.classList.remove('hidden');
+    const el = document.getElementById('authError');
+    el.textContent = message;
+    el.classList.remove('hidden');
+  }
+
+  showError(message) {
+    const toast = document.getElementById('errorToast');
+    toast.textContent = message;
+    toast.classList.add('show');
+    setTimeout(() => toast.classList.remove('show'), 4000);
   }
 
   handleAuth() {
-    const tokenInput = document.getElementById('tokenInput');
-    const token = tokenInput.value.trim();
-
+    const token = document.getElementById('tokenInput').value.trim();
     if (!token) {
       this.showAuthError('Please enter a token');
       return;
     }
-
     this.token = token;
     localStorage.setItem('token', token);
     this.hideAuthOverlay();
@@ -91,8 +120,6 @@ class RemoteTerminal {
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     let wsUrl = `${protocol}//${window.location.host}?token=${encodeURIComponent(this.token)}`;
-
-    // Include visitor ID for reconnection
     if (this.visitorId) {
       wsUrl += `&visitorId=${encodeURIComponent(this.visitorId)}`;
     }
@@ -100,40 +127,32 @@ class RemoteTerminal {
     this.ws = new WebSocket(wsUrl);
 
     this.ws.onopen = () => {
-      console.log('WebSocket connected');
       this.reconnectAttempts = 0;
       this.updateStatus('connected');
       document.getElementById('reconnectBanner').classList.remove('show');
     };
 
-    this.ws.onmessage = (event) => {
+    this.ws.onmessage = (e) => {
       try {
-        const msg = JSON.parse(event.data);
-        this.handleMessage(msg);
-      } catch (e) {
-        console.error('Failed to parse message:', e);
+        this.handleMessage(JSON.parse(e.data));
+      } catch (err) {
+        console.error('Parse error:', err);
       }
     };
 
-    this.ws.onclose = (event) => {
-      console.log('WebSocket closed:', event.code, event.reason);
+    this.ws.onclose = (e) => {
       this.updateStatus('disconnected');
-
-      if (event.code === 4001) {
+      if (e.code === 4001) {
         localStorage.removeItem('token');
         localStorage.removeItem('visitorId');
         this.showAuthOverlay();
-        this.showAuthError('Invalid token. Please try again.');
+        this.showAuthError('Invalid token');
         return;
       }
-
       this.attemptReconnect();
     };
 
-    this.ws.onerror = (error) => {
-      console.error('WebSocket error:', error);
-      this.updateStatus('disconnected');
-    };
+    this.ws.onerror = () => this.updateStatus('disconnected');
   }
 
   handleMessage(msg) {
@@ -141,14 +160,11 @@ class RemoteTerminal {
       case 'session':
         this.visitorId = msg.visitorId;
         localStorage.setItem('visitorId', msg.visitorId);
-        console.log('Session established:', msg.visitorId);
-
-        // Initialize terminals from session
-        if (msg.terminals && msg.terminals.length > 0) {
+        if (msg.tmux) this.updateTmuxStatus(msg.tmux);
+        if (msg.terminals?.length) {
           msg.terminals.forEach(t => this.initTerminal(t));
-          // Activate the first active or first terminal
-          const activeTerminal = msg.terminals.find(t => t.isActive) || msg.terminals[0];
-          this.switchTerminal(activeTerminal.id);
+          const active = msg.terminals.find(t => t.isActive) || msg.terminals[0];
+          this.switchTerminal(active.id);
         }
         break;
 
@@ -163,9 +179,9 @@ class RemoteTerminal {
 
       case 'terminal-closed':
         this.removeTerminal(msg.terminalId);
-        if (msg.terminals && msg.terminals.length > 0) {
-          const nextActive = msg.terminals.find(t => t.isActive) || msg.terminals[0];
-          this.switchTerminal(nextActive.id);
+        if (msg.terminals?.length) {
+          const next = msg.terminals.find(t => t.isActive) || msg.terminals[0];
+          this.switchTerminal(next.id);
         }
         break;
 
@@ -173,97 +189,121 @@ class RemoteTerminal {
         this.updateTabName(msg.terminalId, msg.name);
         break;
 
-      case 'terminal-switched':
-        this.switchTerminal(msg.terminalId);
+      case 'tmux-sessions':
+        if (msg.tmux) this.updateTmuxStatus(msg.tmux);
+        break;
+
+      case 'error':
+        this.showError(msg.message);
         break;
 
       case 'exit':
         const term = this.terminals.get(msg.terminalId);
-        if (term) {
-          term.terminal.writeln(`\r\n\x1b[33mProcess exited (code: ${msg.exitCode})\x1b[0m`);
-        }
+        if (term) term.terminal.writeln(`\r\n\x1b[33mProcess exited (${msg.exitCode})\x1b[0m`);
         break;
-
-      case 'pong':
-        break;
-
-      default:
-        console.log('Unknown message type:', msg.type);
     }
   }
 
-  initTerminal(terminalInfo) {
-    const { id, name } = terminalInfo;
+  updateTmuxStatus(info) {
+    this.tmuxAvailable = info.available;
+    this.tmuxSessions = info.sessions || [];
 
-    // Create terminal instance
+    const badge = document.getElementById('tmuxBadge');
+    badge.classList.toggle('unavailable', !this.tmuxAvailable);
+
+    this.renderTmuxSessions();
+  }
+
+  renderTmuxSessions() {
+    const container = document.getElementById('tmuxSessionsList');
+
+    if (!this.tmuxAvailable) {
+      container.innerHTML = '<div class="no-sessions">tmux not installed</div>';
+      return;
+    }
+
+    if (!this.tmuxSessions.length) {
+      container.innerHTML = '<div class="no-sessions">No sessions running</div>';
+      return;
+    }
+
+    container.innerHTML = this.tmuxSessions.map(s => `
+      <button class="modal-item" data-session="${this.escapeHtml(s.name)}">
+        <div class="modal-item-icon tmux">⎔</div>
+        <div class="modal-item-content">
+          <div class="modal-item-title">${this.escapeHtml(s.name)}</div>
+          <div class="modal-item-subtitle">${s.windows} window${s.windows > 1 ? 's' : ''}${s.attached ? ' • attached' : ''}</div>
+        </div>
+      </button>
+    `).join('');
+
+    container.querySelectorAll('[data-session]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        this.attachTmuxSession(btn.dataset.session);
+        this.closeModal();
+      });
+    });
+  }
+
+  initTerminal(info) {
+    if (this.terminals.has(info.id)) return;
+
     const terminal = new Terminal({
       cursorBlink: true,
       fontSize: 14,
-      fontFamily: '"SF Mono", Monaco, "Courier New", monospace',
+      fontFamily: '"SF Mono", Monaco, "Cascadia Code", "Courier New", monospace',
       theme: {
-        background: '#1a1a2e',
-        foreground: '#eee',
-        cursor: '#e94560',
-        cursorAccent: '#1a1a2e',
-        selection: 'rgba(233, 69, 96, 0.3)',
-        black: '#1a1a2e',
-        red: '#e94560',
-        green: '#4ade80',
-        yellow: '#fbbf24',
-        blue: '#60a5fa',
-        magenta: '#c084fc',
-        cyan: '#22d3ee',
-        white: '#eee',
-        brightBlack: '#888',
-        brightRed: '#f87171',
-        brightGreen: '#86efac',
-        brightYellow: '#fde047',
-        brightBlue: '#93c5fd',
-        brightMagenta: '#d8b4fe',
-        brightCyan: '#67e8f9',
-        brightWhite: '#fff',
+        background: '#191919',
+        foreground: '#e8e8e8',
+        cursor: '#da7756',
+        cursorAccent: '#191919',
+        selection: 'rgba(218, 119, 86, 0.3)',
+        black: '#191919',
+        red: '#e85c5c',
+        green: '#5bb98b',
+        yellow: '#e5a84b',
+        blue: '#6b9eff',
+        magenta: '#c792ea',
+        cyan: '#56d4dd',
+        white: '#e8e8e8',
+        brightBlack: '#6b6b6b',
+        brightRed: '#ff7b7b',
+        brightGreen: '#7dd6a8',
+        brightYellow: '#ffc66d',
+        brightBlue: '#8cb4ff',
+        brightMagenta: '#ddb3f8',
+        brightCyan: '#7ce8f0',
+        brightWhite: '#ffffff',
       },
       allowProposedApi: true,
     });
 
     const fitAddon = new FitAddon.FitAddon();
     terminal.loadAddon(fitAddon);
+    terminal.loadAddon(new WebLinksAddon.WebLinksAddon());
 
-    const webLinksAddon = new WebLinksAddon.WebLinksAddon();
-    terminal.loadAddon(webLinksAddon);
-
-    // Create container element
     const pane = document.createElement('div');
     pane.className = 'terminal-pane';
-    pane.id = `terminal-${id}`;
+    pane.id = `terminal-${info.id}`;
     document.getElementById('terminalsWrapper').appendChild(pane);
 
     terminal.open(pane);
 
-    // Handle input
-    terminal.onData((data) => {
-      this.send({ type: 'input', terminalId: id, data });
-    });
+    terminal.onData(data => this.send({ type: 'input', terminalId: info.id, data }));
+    terminal.onResize(({ cols, rows }) => this.send({ type: 'resize', terminalId: info.id, cols, rows }));
 
-    terminal.onResize(({ cols, rows }) => {
-      this.send({ type: 'resize', terminalId: id, cols, rows });
-    });
-
-    this.terminals.set(id, { terminal, fitAddon, element: pane, name });
-
-    // Create tab
-    this.createTab(id, name);
+    this.terminals.set(info.id, { terminal, fitAddon, element: pane, name: info.name, type: info.type || 'shell' });
+    this.createTab(info.id, info.name, info.type);
   }
 
-  createTab(id, name) {
-    const tabsContainer = document.getElementById('tabs');
-
+  createTab(id, name, type) {
     const tab = document.createElement('button');
-    tab.className = 'tab';
+    tab.className = 'tab' + (type === 'tmux' ? ' tmux' : '');
     tab.id = `tab-${id}`;
     tab.innerHTML = `
+      <span class="tab-icon">${type === 'tmux' ? '⎔' : '$'}</span>
       <span class="tab-name">${this.escapeHtml(name)}</span>
-      <button class="tab-close" title="Close terminal">×</button>
+      <button class="tab-close">×</button>
     `;
 
     tab.addEventListener('click', (e) => {
@@ -278,55 +318,31 @@ class RemoteTerminal {
       this.closeTerminal(id);
     });
 
-    // Double click to rename
-    tab.querySelector('.tab-name').addEventListener('dblclick', () => {
-      this.renameTerminal(id);
-    });
+    tab.querySelector('.tab-name').addEventListener('dblclick', () => this.renameTerminal(id));
 
-    tabsContainer.appendChild(tab);
+    document.getElementById('tabs').appendChild(tab);
   }
 
   switchTerminal(id) {
-    // Deactivate all
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.terminal-pane').forEach(p => p.classList.remove('active'));
 
-    // Activate selected
-    const tab = document.getElementById(`tab-${id}`);
-    const pane = document.getElementById(`terminal-${id}`);
-
-    if (tab) tab.classList.add('active');
-    if (pane) pane.classList.add('active');
+    document.getElementById(`tab-${id}`)?.classList.add('active');
+    document.getElementById(`terminal-${id}`)?.classList.add('active');
 
     this.activeTerminalId = id;
 
-    // Fit and focus
-    const termInfo = this.terminals.get(id);
-    if (termInfo) {
-      setTimeout(() => {
-        termInfo.fitAddon.fit();
-        termInfo.terminal.focus();
-      }, 10);
-    }
+    const t = this.terminals.get(id);
+    if (t) setTimeout(() => { t.fitAddon.fit(); t.terminal.focus(); }, 10);
   }
 
-  writeToTerminal(terminalId, data) {
-    const termInfo = this.terminals.get(terminalId);
-    if (termInfo) {
-      termInfo.terminal.write(data);
-    }
+  writeToTerminal(id, data) {
+    this.terminals.get(id)?.terminal.write(data);
   }
 
   fitActiveTerminal() {
     if (this.activeTerminalId) {
-      const termInfo = this.terminals.get(this.activeTerminalId);
-      if (termInfo) {
-        try {
-          termInfo.fitAddon.fit();
-        } catch (e) {
-          // Ignore fit errors
-        }
-      }
+      try { this.terminals.get(this.activeTerminalId)?.fitAddon.fit(); } catch {}
     }
   }
 
@@ -334,107 +350,76 @@ class RemoteTerminal {
     this.send({ type: 'create-terminal' });
   }
 
-  closeTerminal(id) {
-    if (this.terminals.size <= 1) {
-      // Don't close the last terminal
+  createNewTmuxSession() {
+    if (!this.tmuxAvailable) {
+      this.showError('tmux is not available');
       return;
     }
+    const name = prompt('Session name:', `session-${Date.now()}`);
+    if (name?.trim()) this.send({ type: 'create-tmux', sessionName: name.trim() });
+  }
+
+  attachTmuxSession(name) {
+    this.send({ type: 'attach-tmux', sessionName: name });
+  }
+
+  closeTerminal(id) {
+    if (this.terminals.size <= 1) return;
     this.send({ type: 'close-terminal', terminalId: id });
   }
 
   removeTerminal(id) {
-    const termInfo = this.terminals.get(id);
-    if (termInfo) {
-      termInfo.terminal.dispose();
-      termInfo.element.remove();
+    const t = this.terminals.get(id);
+    if (t) {
+      t.terminal.dispose();
+      t.element.remove();
       this.terminals.delete(id);
     }
-
-    const tab = document.getElementById(`tab-${id}`);
-    if (tab) tab.remove();
+    document.getElementById(`tab-${id}`)?.remove();
   }
 
   renameTerminal(id) {
-    const termInfo = this.terminals.get(id);
-    if (!termInfo) return;
-
-    const newName = prompt('Enter new terminal name:', termInfo.name);
-    if (newName && newName.trim()) {
-      this.send({ type: 'rename-terminal', terminalId: id, name: newName.trim() });
-    }
+    const t = this.terminals.get(id);
+    if (!t) return;
+    const name = prompt('New name:', t.name);
+    if (name?.trim()) this.send({ type: 'rename-terminal', terminalId: id, name: name.trim() });
   }
 
   updateTabName(id, name) {
-    const tab = document.getElementById(`tab-${id}`);
-    if (tab) {
-      const nameEl = tab.querySelector('.tab-name');
-      if (nameEl) {
-        nameEl.textContent = name;
-      }
-    }
-    const termInfo = this.terminals.get(id);
-    if (termInfo) {
-      termInfo.name = name;
-    }
+    const el = document.querySelector(`#tab-${id} .tab-name`);
+    if (el) el.textContent = name;
+    const t = this.terminals.get(id);
+    if (t) t.name = name;
   }
 
   send(data) {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+    if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(data));
     }
   }
 
   attemptReconnect() {
-    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      console.log('Max reconnect attempts reached');
-      return;
-    }
-
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) return;
     this.reconnectAttempts++;
     const delay = Math.min(this.reconnectDelay * Math.pow(1.5, this.reconnectAttempts - 1), 30000);
-
-    console.log(`Reconnecting in ${delay / 1000}s... (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
     document.getElementById('reconnectBanner').classList.add('show');
-
-    setTimeout(() => {
-      this.connect();
-    }, delay);
+    setTimeout(() => this.connect(), delay);
   }
 
   updateStatus(status) {
     const dot = document.getElementById('statusDot');
     const text = document.getElementById('statusText');
-
     dot.className = 'status-dot ' + status;
-
-    switch (status) {
-      case 'connected':
-        text.textContent = 'Connected';
-        break;
-      case 'connecting':
-        text.textContent = 'Connecting...';
-        break;
-      case 'disconnected':
-        text.textContent = 'Disconnected';
-        break;
-    }
+    text.textContent = { connected: 'Connected', connecting: 'Connecting...', disconnected: 'Disconnected' }[status];
   }
 
-  escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-  }
-
-  // Heartbeat
-  startHeartbeat() {
-    setInterval(() => {
-      this.send({ type: 'ping' });
-    }, 30000);
+  escapeHtml(s) {
+    const d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
   }
 }
 
-// Initialize
 document.addEventListener('DOMContentLoaded', () => {
   window.remoteTerminal = new RemoteTerminal();
 });

@@ -2,13 +2,15 @@ import { nanoid } from 'nanoid';
 import pty from 'node-pty';
 import os from 'os';
 import fs from 'fs';
+import { TmuxManager } from './tmux-manager.js';
 
 export class SessionManager {
   constructor() {
-    // Map of visitorId -> { terminals: Map<terminalId, ptyProcess>, activeTerminal }
+    // Map of visitorId -> { terminals: Map<terminalId, terminalInfo>, activeTerminal }
     this.visitors = new Map();
     this.terminalBuffers = new Map(); // terminalId -> last N bytes of output for reconnection
     this.bufferSize = 50000; // Keep last 50KB of output per terminal
+    this.tmux = new TmuxManager();
   }
 
   getOrCreateVisitor(visitorId) {
@@ -20,6 +22,103 @@ export class SessionManager {
       });
     }
     return this.visitors.get(visitorId);
+  }
+
+  // Get tmux status and sessions
+  getTmuxInfo() {
+    return this.tmux.listSessions();
+  }
+
+  // Attach to an existing tmux session
+  attachTmuxSession(visitorId, tmuxSessionName) {
+    if (!this.tmux.isAvailable()) {
+      throw new Error('tmux is not installed on this system');
+    }
+
+    if (!this.tmux.sessionExists(tmuxSessionName)) {
+      throw new Error(`tmux session "${tmuxSessionName}" not found`);
+    }
+
+    const visitor = this.getOrCreateVisitor(visitorId);
+    const terminalId = nanoid(12);
+    const terminalName = `tmux: ${tmuxSessionName}`;
+
+    const ptyProcess = this.tmux.attachToSession(tmuxSessionName);
+
+    const terminalInfo = {
+      id: terminalId,
+      name: terminalName,
+      pty: ptyProcess,
+      type: 'tmux',
+      tmuxSession: tmuxSessionName,
+      createdAt: Date.now(),
+      lastActivity: Date.now(),
+    };
+
+    visitor.terminals.set(terminalId, terminalInfo);
+    this.terminalBuffers.set(terminalId, '');
+
+    // Capture output
+    ptyProcess.onData((data) => {
+      terminalInfo.lastActivity = Date.now();
+      let buffer = this.terminalBuffers.get(terminalId) || '';
+      buffer += data;
+      if (buffer.length > this.bufferSize) {
+        buffer = buffer.slice(-this.bufferSize);
+      }
+      this.terminalBuffers.set(terminalId, buffer);
+    });
+
+    if (!visitor.activeTerminal) {
+      visitor.activeTerminal = terminalId;
+    }
+
+    console.log(`[Session] Attached to tmux session "${tmuxSessionName}" as terminal ${terminalId}`);
+    return terminalInfo;
+  }
+
+  // Create a new tmux session
+  createTmuxSession(visitorId, tmuxSessionName) {
+    if (!this.tmux.isAvailable()) {
+      throw new Error('tmux is not installed on this system');
+    }
+
+    const visitor = this.getOrCreateVisitor(visitorId);
+    const terminalId = nanoid(12);
+    const terminalName = `tmux: ${tmuxSessionName}`;
+
+    const ptyProcess = this.tmux.createSession(tmuxSessionName);
+
+    const terminalInfo = {
+      id: terminalId,
+      name: terminalName,
+      pty: ptyProcess,
+      type: 'tmux',
+      tmuxSession: tmuxSessionName,
+      createdAt: Date.now(),
+      lastActivity: Date.now(),
+    };
+
+    visitor.terminals.set(terminalId, terminalInfo);
+    this.terminalBuffers.set(terminalId, '');
+
+    // Capture output
+    ptyProcess.onData((data) => {
+      terminalInfo.lastActivity = Date.now();
+      let buffer = this.terminalBuffers.get(terminalId) || '';
+      buffer += data;
+      if (buffer.length > this.bufferSize) {
+        buffer = buffer.slice(-this.bufferSize);
+      }
+      this.terminalBuffers.set(terminalId, buffer);
+    });
+
+    if (!visitor.activeTerminal) {
+      visitor.activeTerminal = terminalId;
+    }
+
+    console.log(`[Session] Created tmux session "${tmuxSessionName}" as terminal ${terminalId}`);
+    return terminalInfo;
   }
 
   createTerminal(visitorId, name = null) {
@@ -56,6 +155,7 @@ export class SessionManager {
       id: terminalId,
       name: terminalName,
       pty: ptyProcess,
+      type: 'shell',
       createdAt: Date.now(),
       lastActivity: Date.now(),
     };
@@ -100,6 +200,8 @@ export class SessionManager {
     return Array.from(visitor.terminals.values()).map(t => ({
       id: t.id,
       name: t.name,
+      type: t.type || 'shell',
+      tmuxSession: t.tmuxSession || null,
       createdAt: t.createdAt,
       lastActivity: t.lastActivity,
       isActive: t.id === visitor.activeTerminal,
@@ -147,15 +249,25 @@ export class SessionManager {
     return false;
   }
 
-  closeTerminal(visitorId, terminalId) {
+  closeTerminal(visitorId, terminalId, killTmuxSession = false) {
     const visitor = this.visitors.get(visitorId);
     if (!visitor) return false;
 
     const terminal = visitor.terminals.get(terminalId);
     if (terminal) {
+      // For tmux sessions, just detach by default (don't kill the session)
+      if (terminal.type === 'tmux' && !killTmuxSession) {
+        console.log(`[Session] Detaching from tmux session "${terminal.tmuxSession}" (session preserved)`);
+      }
+
       terminal.pty.kill();
       visitor.terminals.delete(terminalId);
       this.terminalBuffers.delete(terminalId);
+
+      // Optionally kill the tmux session
+      if (terminal.type === 'tmux' && killTmuxSession && terminal.tmuxSession) {
+        this.tmux.killSession(terminal.tmuxSession);
+      }
 
       // Update active terminal if needed
       if (visitor.activeTerminal === terminalId) {
@@ -191,6 +303,7 @@ export class SessionManager {
     return {
       visitors: this.visitors.size,
       terminals: totalTerminals,
+      tmuxAvailable: this.tmux.isAvailable(),
     };
   }
 
