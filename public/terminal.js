@@ -1,31 +1,42 @@
-// Terminal client
+// Multi-terminal client with session persistence
 class RemoteTerminal {
   constructor() {
     this.ws = null;
-    this.terminal = null;
-    this.fitAddon = null;
     this.token = null;
+    this.visitorId = null;
+    this.terminals = new Map(); // terminalId -> { terminal, fitAddon, element }
+    this.activeTerminalId = null;
     this.reconnectAttempts = 0;
-    this.maxReconnectAttempts = 5;
+    this.maxReconnectAttempts = 10;
     this.reconnectDelay = 1000;
 
     this.init();
   }
 
   init() {
+    // Check for existing session
+    this.visitorId = localStorage.getItem('visitorId');
+
     // Check for token in URL
     const urlParams = new URLSearchParams(window.location.search);
     const urlToken = urlParams.get('token');
 
     if (urlToken) {
       this.token = urlToken;
-      // Clear token from URL for security
+      localStorage.setItem('token', urlToken);
       window.history.replaceState({}, document.title, window.location.pathname);
       this.hideAuthOverlay();
-      this.initTerminal();
       this.connect();
     } else {
-      this.showAuthOverlay();
+      // Try stored token
+      const storedToken = localStorage.getItem('token');
+      if (storedToken) {
+        this.token = storedToken;
+        this.hideAuthOverlay();
+        this.connect();
+      } else {
+        this.showAuthOverlay();
+      }
     }
 
     // Setup auth form
@@ -33,6 +44,12 @@ class RemoteTerminal {
     document.getElementById('tokenInput').addEventListener('keypress', (e) => {
       if (e.key === 'Enter') this.handleAuth();
     });
+
+    // New tab button
+    document.getElementById('newTabBtn').addEventListener('click', () => this.createNewTerminal());
+
+    // Handle window resize
+    window.addEventListener('resize', () => this.fitActiveTerminal());
   }
 
   showAuthOverlay() {
@@ -60,14 +77,126 @@ class RemoteTerminal {
     }
 
     this.token = token;
+    localStorage.setItem('token', token);
     this.hideAuthOverlay();
-    this.initTerminal();
     this.connect();
   }
 
-  initTerminal() {
-    // Create terminal
-    this.terminal = new Terminal({
+  connect() {
+    this.updateStatus('connecting');
+
+    if (this.visitorId) {
+      document.getElementById('reconnectBanner').classList.add('show');
+    }
+
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    let wsUrl = `${protocol}//${window.location.host}?token=${encodeURIComponent(this.token)}`;
+
+    // Include visitor ID for reconnection
+    if (this.visitorId) {
+      wsUrl += `&visitorId=${encodeURIComponent(this.visitorId)}`;
+    }
+
+    this.ws = new WebSocket(wsUrl);
+
+    this.ws.onopen = () => {
+      console.log('WebSocket connected');
+      this.reconnectAttempts = 0;
+      this.updateStatus('connected');
+      document.getElementById('reconnectBanner').classList.remove('show');
+    };
+
+    this.ws.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+        this.handleMessage(msg);
+      } catch (e) {
+        console.error('Failed to parse message:', e);
+      }
+    };
+
+    this.ws.onclose = (event) => {
+      console.log('WebSocket closed:', event.code, event.reason);
+      this.updateStatus('disconnected');
+
+      if (event.code === 4001) {
+        localStorage.removeItem('token');
+        localStorage.removeItem('visitorId');
+        this.showAuthOverlay();
+        this.showAuthError('Invalid token. Please try again.');
+        return;
+      }
+
+      this.attemptReconnect();
+    };
+
+    this.ws.onerror = (error) => {
+      console.error('WebSocket error:', error);
+      this.updateStatus('disconnected');
+    };
+  }
+
+  handleMessage(msg) {
+    switch (msg.type) {
+      case 'session':
+        this.visitorId = msg.visitorId;
+        localStorage.setItem('visitorId', msg.visitorId);
+        console.log('Session established:', msg.visitorId);
+
+        // Initialize terminals from session
+        if (msg.terminals && msg.terminals.length > 0) {
+          msg.terminals.forEach(t => this.initTerminal(t));
+          // Activate the first active or first terminal
+          const activeTerminal = msg.terminals.find(t => t.isActive) || msg.terminals[0];
+          this.switchTerminal(activeTerminal.id);
+        }
+        break;
+
+      case 'output':
+        this.writeToTerminal(msg.terminalId, msg.data);
+        break;
+
+      case 'terminal-created':
+        this.initTerminal(msg.terminal);
+        this.switchTerminal(msg.terminal.id);
+        break;
+
+      case 'terminal-closed':
+        this.removeTerminal(msg.terminalId);
+        if (msg.terminals && msg.terminals.length > 0) {
+          const nextActive = msg.terminals.find(t => t.isActive) || msg.terminals[0];
+          this.switchTerminal(nextActive.id);
+        }
+        break;
+
+      case 'terminal-renamed':
+        this.updateTabName(msg.terminalId, msg.name);
+        break;
+
+      case 'terminal-switched':
+        this.switchTerminal(msg.terminalId);
+        break;
+
+      case 'exit':
+        const term = this.terminals.get(msg.terminalId);
+        if (term) {
+          term.terminal.writeln(`\r\n\x1b[33mProcess exited (code: ${msg.exitCode})\x1b[0m`);
+        }
+        break;
+
+      case 'pong':
+        break;
+
+      default:
+        console.log('Unknown message type:', msg.type);
+    }
+  }
+
+  initTerminal(terminalInfo) {
+    const { id, name } = terminalInfo;
+
+    // Create terminal instance
+    const terminal = new Terminal({
       cursorBlink: true,
       fontSize: 14,
       fontFamily: '"SF Mono", Monaco, "Courier New", monospace',
@@ -97,118 +226,155 @@ class RemoteTerminal {
       allowProposedApi: true,
     });
 
-    // Add fit addon
-    this.fitAddon = new FitAddon.FitAddon();
-    this.terminal.loadAddon(this.fitAddon);
+    const fitAddon = new FitAddon.FitAddon();
+    terminal.loadAddon(fitAddon);
 
-    // Add web links addon
     const webLinksAddon = new WebLinksAddon.WebLinksAddon();
-    this.terminal.loadAddon(webLinksAddon);
+    terminal.loadAddon(webLinksAddon);
 
-    // Open terminal
-    const container = document.getElementById('terminal');
-    this.terminal.open(container);
+    // Create container element
+    const pane = document.createElement('div');
+    pane.className = 'terminal-pane';
+    pane.id = `terminal-${id}`;
+    document.getElementById('terminalsWrapper').appendChild(pane);
 
-    // Fit to container
-    this.fitTerminal();
-
-    // Handle resize
-    window.addEventListener('resize', () => this.fitTerminal());
+    terminal.open(pane);
 
     // Handle input
-    this.terminal.onData((data) => {
-      this.send({ type: 'input', data });
+    terminal.onData((data) => {
+      this.send({ type: 'input', terminalId: id, data });
     });
 
-    // Handle resize
-    this.terminal.onResize(({ cols, rows }) => {
-      this.send({ type: 'resize', cols, rows });
+    terminal.onResize(({ cols, rows }) => {
+      this.send({ type: 'resize', terminalId: id, cols, rows });
     });
+
+    this.terminals.set(id, { terminal, fitAddon, element: pane, name });
+
+    // Create tab
+    this.createTab(id, name);
   }
 
-  fitTerminal() {
-    if (this.fitAddon) {
-      try {
-        this.fitAddon.fit();
-      } catch (e) {
-        // Ignore fit errors
+  createTab(id, name) {
+    const tabsContainer = document.getElementById('tabs');
+
+    const tab = document.createElement('button');
+    tab.className = 'tab';
+    tab.id = `tab-${id}`;
+    tab.innerHTML = `
+      <span class="tab-name">${this.escapeHtml(name)}</span>
+      <button class="tab-close" title="Close terminal">×</button>
+    `;
+
+    tab.addEventListener('click', (e) => {
+      if (!e.target.classList.contains('tab-close')) {
+        this.switchTerminal(id);
+        this.send({ type: 'switch-terminal', terminalId: id });
+      }
+    });
+
+    tab.querySelector('.tab-close').addEventListener('click', (e) => {
+      e.stopPropagation();
+      this.closeTerminal(id);
+    });
+
+    // Double click to rename
+    tab.querySelector('.tab-name').addEventListener('dblclick', () => {
+      this.renameTerminal(id);
+    });
+
+    tabsContainer.appendChild(tab);
+  }
+
+  switchTerminal(id) {
+    // Deactivate all
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.terminal-pane').forEach(p => p.classList.remove('active'));
+
+    // Activate selected
+    const tab = document.getElementById(`tab-${id}`);
+    const pane = document.getElementById(`terminal-${id}`);
+
+    if (tab) tab.classList.add('active');
+    if (pane) pane.classList.add('active');
+
+    this.activeTerminalId = id;
+
+    // Fit and focus
+    const termInfo = this.terminals.get(id);
+    if (termInfo) {
+      setTimeout(() => {
+        termInfo.fitAddon.fit();
+        termInfo.terminal.focus();
+      }, 10);
+    }
+  }
+
+  writeToTerminal(terminalId, data) {
+    const termInfo = this.terminals.get(terminalId);
+    if (termInfo) {
+      termInfo.terminal.write(data);
+    }
+  }
+
+  fitActiveTerminal() {
+    if (this.activeTerminalId) {
+      const termInfo = this.terminals.get(this.activeTerminalId);
+      if (termInfo) {
+        try {
+          termInfo.fitAddon.fit();
+        } catch (e) {
+          // Ignore fit errors
+        }
       }
     }
   }
 
-  connect() {
-    this.updateStatus('connecting');
-
-    // Determine WebSocket URL
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${window.location.host}?token=${encodeURIComponent(this.token)}`;
-
-    this.ws = new WebSocket(wsUrl);
-
-    this.ws.onopen = () => {
-      console.log('WebSocket connected');
-      this.reconnectAttempts = 0;
-      this.updateStatus('connected');
-    };
-
-    this.ws.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data);
-        this.handleMessage(msg);
-      } catch (e) {
-        console.error('Failed to parse message:', e);
-      }
-    };
-
-    this.ws.onclose = (event) => {
-      console.log('WebSocket closed:', event.code, event.reason);
-      this.updateStatus('disconnected');
-
-      if (event.code === 4001) {
-        // Invalid token
-        this.terminal.writeln('\r\n\x1b[31mAuthentication failed. Invalid token.\x1b[0m');
-        this.showAuthOverlay();
-        this.showAuthError('Invalid token. Please try again.');
-        return;
-      }
-
-      // Attempt reconnect
-      this.attemptReconnect();
-    };
-
-    this.ws.onerror = (error) => {
-      console.error('WebSocket error:', error);
-      this.updateStatus('disconnected');
-    };
+  createNewTerminal() {
+    this.send({ type: 'create-terminal' });
   }
 
-  handleMessage(msg) {
-    switch (msg.type) {
-      case 'output':
-        this.terminal.write(msg.data);
-        break;
+  closeTerminal(id) {
+    if (this.terminals.size <= 1) {
+      // Don't close the last terminal
+      return;
+    }
+    this.send({ type: 'close-terminal', terminalId: id });
+  }
 
-      case 'ready':
-        console.log('Session ready:', msg.sessionId);
-        this.terminal.focus();
-        // Send initial size
-        this.send({
-          type: 'resize',
-          cols: this.terminal.cols,
-          rows: this.terminal.rows,
-        });
-        break;
+  removeTerminal(id) {
+    const termInfo = this.terminals.get(id);
+    if (termInfo) {
+      termInfo.terminal.dispose();
+      termInfo.element.remove();
+      this.terminals.delete(id);
+    }
 
-      case 'exit':
-        this.terminal.writeln(`\r\n\x1b[33mProcess exited (code: ${msg.exitCode})\x1b[0m`);
-        break;
+    const tab = document.getElementById(`tab-${id}`);
+    if (tab) tab.remove();
+  }
 
-      case 'pong':
-        // Heartbeat response
-        break;
+  renameTerminal(id) {
+    const termInfo = this.terminals.get(id);
+    if (!termInfo) return;
 
-      default:
-        console.log('Unknown message type:', msg.type);
+    const newName = prompt('Enter new terminal name:', termInfo.name);
+    if (newName && newName.trim()) {
+      this.send({ type: 'rename-terminal', terminalId: id, name: newName.trim() });
+    }
+  }
+
+  updateTabName(id, name) {
+    const tab = document.getElementById(`tab-${id}`);
+    if (tab) {
+      const nameEl = tab.querySelector('.tab-name');
+      if (nameEl) {
+        nameEl.textContent = name;
+      }
+    }
+    const termInfo = this.terminals.get(id);
+    if (termInfo) {
+      termInfo.name = name;
     }
   }
 
@@ -220,15 +386,15 @@ class RemoteTerminal {
 
   attemptReconnect() {
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
-      this.terminal.writeln('\r\n\x1b[31mConnection lost. Max reconnect attempts reached.\x1b[0m');
-      this.terminal.writeln('\x1b[33mRefresh the page to try again.\x1b[0m');
+      console.log('Max reconnect attempts reached');
       return;
     }
 
     this.reconnectAttempts++;
-    const delay = this.reconnectDelay * Math.pow(2, this.reconnectAttempts - 1);
+    const delay = Math.min(this.reconnectDelay * Math.pow(1.5, this.reconnectAttempts - 1), 30000);
 
-    this.terminal.writeln(`\r\n\x1b[33mConnection lost. Reconnecting in ${delay / 1000}s... (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})\x1b[0m`);
+    console.log(`Reconnecting in ${delay / 1000}s... (attempt ${this.reconnectAttempts}/${this.maxReconnectAttempts})`);
+    document.getElementById('reconnectBanner').classList.add('show');
 
     setTimeout(() => {
       this.connect();
@@ -254,7 +420,13 @@ class RemoteTerminal {
     }
   }
 
-  // Heartbeat to keep connection alive
+  escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
+  // Heartbeat
   startHeartbeat() {
     setInterval(() => {
       this.send({ type: 'ping' });
@@ -262,7 +434,7 @@ class RemoteTerminal {
   }
 }
 
-// Initialize on load
+// Initialize
 document.addEventListener('DOMContentLoaded', () => {
-  new RemoteTerminal();
+  window.remoteTerminal = new RemoteTerminal();
 });

@@ -4,17 +4,17 @@ Access your Mac terminal from anywhere via browser. Built for Apple Silicon Macs
 
 ## Features
 
-- Browser-based terminal access (works on phone/tablet)
-- Secure one-time token authentication
-- Built-in tunnel support (ngrok or Cloudflare)
-- Full terminal emulation with xterm.js
-- Auto-reconnection on connection loss
+- **QR Code Access** - Scan QR code from terminal to connect instantly
+- **Multiple Terminals** - Tab-based interface, create unlimited terminals
+- **Session Persistence** - Reconnect to existing sessions, output is preserved
+- **Secure** - One-time token authentication, HTTPS via tunnel
+- **Mobile Friendly** - Optimized UI for phones and tablets
 
 ## Requirements
 
 - macOS (Apple Silicon recommended)
 - Node.js 18+
-- Homebrew (for dependencies)
+- ngrok or cloudflared (for remote access)
 
 ## Installation
 
@@ -38,8 +38,8 @@ remote-terminal
 
 This will:
 1. Start the local server on port 3000
-2. Create an ngrok tunnel
-3. Display the access URL and token
+2. Create a tunnel (ngrok by default)
+3. Display QR code and access URL
 
 ### Options
 
@@ -51,37 +51,79 @@ remote-terminal --port 8080           # Use custom port
 
 ### Access from phone
 
-1. Copy the URL displayed in terminal
-2. Open it in your phone's browser
-3. Enter the token (or use the full URL with token)
-4. Start using your terminal!
+1. **Scan the QR code** displayed in terminal, OR
+2. Copy the URL and open in browser
+3. Start using your terminal!
+
+### Multiple Terminals
+
+- Click **+** button to create new terminal
+- Click tabs to switch between terminals
+- Double-click tab name to rename
+- Click **×** on tab to close terminal
+
+### Session Persistence
+
+- Sessions persist even when you disconnect
+- Reconnecting restores your terminals and output
+- Session ID stored in browser localStorage
+
+## Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `/` | Terminal UI |
+| `/qr` | QR code image (PNG) |
+| `/health` | Server health check |
 
 ## Configuration
 
 ### ngrok (default)
 
-Works out of the box with free ngrok. For longer sessions, get a free auth token:
+Works out of the box. For longer sessions:
 
 1. Sign up at https://ngrok.com
-2. Get your auth token from the dashboard
+2. Get your auth token
 3. Run: `remote-terminal --ngrok-token YOUR_TOKEN`
 
 ### Cloudflare Tunnel
 
-Uses Cloudflare's free quick tunnels:
+Uses Cloudflare's free quick tunnels (no account needed):
 
 ```bash
+brew install cloudflared
 remote-terminal --cloudflare
 ```
 
-Requires `cloudflared` (installed automatically if you choose during setup).
+## Architecture
+
+```
+┌─────────────────────────────────────────┐
+│  Mac                                    │
+│  ├── Express Server                     │
+│  │   ├── Static files (UI)              │
+│  │   ├── WebSocket (terminal I/O)       │
+│  │   └── QR code generation             │
+│  ├── Session Manager                    │
+│  │   ├── Multiple PTY sessions          │
+│  │   └── Output buffering               │
+│  └── Tunnel (ngrok/cloudflare)          │
+└─────────────────────────────────────────┘
+              │
+              ▼
+      Phone/Browser
+      ├── Tab-based UI
+      ├── xterm.js terminals
+      └── Session reconnection
+```
 
 ## Security
 
 - Each server start generates a new one-time token
-- Token is required for all connections
+- Token required for WebSocket connections
 - HTTPS enforced via tunnel
-- Sessions are isolated per connection
+- Sessions isolated per visitor
+- Output buffer limited to 50KB per terminal
 
 **Important:** Never share your access URL/token publicly.
 
@@ -91,37 +133,20 @@ Requires `cloudflared` (installed automatically if you choose during setup).
 ./uninstall.sh
 ```
 
-## Architecture
-
-```
-┌─────────────────────────────────────────┐
-│  Mac                                    │
-│  ├── Node.js Server                     │
-│  │   ├── Express (static files)         │
-│  │   ├── WebSocket (terminal I/O)       │
-│  │   └── node-pty (shell)               │
-│  └── Tunnel (ngrok/cloudflare)          │
-└─────────────────────────────────────────┘
-                    │
-                    ▼
-            Phone/Browser
-            (xterm.js UI)
-```
-
 ## Troubleshooting
 
-### "ngrok tunnel failed"
+### "ngrok session limit reached"
 
-- Check internet connection
-- Try with `--cloudflare` instead
-- Get a free ngrok auth token
+Free ngrok allows 1 session. Either:
+- Close other ngrok instances: `pkill ngrok`
+- Use Cloudflare instead: `remote-terminal --cloudflare`
 
-### "Permission denied"
+### "Port already in use"
 
-- Run install with proper permissions
-- Check that `/usr/local/bin` is writable
+```bash
+lsof -ti:3000 | xargs kill -9
+```
 
-### Connection drops frequently
+### Session not restoring
 
-- Use authenticated ngrok for longer sessions
-- Check your network stability
+Clear browser localStorage and reconnect with fresh token.
