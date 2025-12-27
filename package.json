@@ -1,0 +1,23 @@
+{
+  "name": "remote-terminal",
+  "version": "1.0.0",
+  "description": "Access your Mac terminal from anywhere via browser",
+  "main": "src/server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "postinstall": "chmod +x node_modules/node-pty/prebuilds/darwin-*/spawn-helper 2>/dev/null || true"
+  },
+  "keywords": ["terminal", "remote", "pty", "xterm"],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "ws": "^8.16.0",
+    "node-pty": "^1.0.0",
+    "nanoid": "^5.0.4"
+  }
+}
