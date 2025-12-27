@@ -1,5 +1,74 @@
 import { spawn } from 'child_process';
 
+// localhost.run Tunnel (SSH-based, no signup needed, instant)
+export class LocalhostRunTunnel {
+  constructor() {
+    this.process = null;
+    this.url = null;
+  }
+
+  async start(port) {
+    return new Promise((resolve, reject) => {
+      // Use SSH to create tunnel - works on Mac/Linux without any install
+      this.process = spawn('ssh', [
+        '-o', 'StrictHostKeyChecking=no',
+        '-o', 'ServerAliveInterval=30',
+        '-R', `80:localhost:${port}`,
+        'nokey@localhost.run'
+      ], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+
+      let output = '';
+      let resolved = false;
+
+      const handleData = (data) => {
+        output += data.toString();
+        // localhost.run outputs URL like: https://xxxxx.lhr.life
+        const match = output.match(/https:\/\/[a-z0-9]+\.lhr\.life/);
+        if (match && !resolved) {
+          resolved = true;
+          this.url = match[0];
+          console.log(`[Tunnel] localhost.run tunnel ready`);
+          resolve(this.url);
+        }
+      };
+
+      this.process.stdout.on('data', handleData);
+      this.process.stderr.on('data', handleData);
+
+      this.process.on('error', (error) => {
+        if (resolved) return;
+        reject(new Error(`Failed to start SSH tunnel: ${error.message}`));
+      });
+
+      this.process.on('close', (code) => {
+        if (!resolved) {
+          reject(new Error(`SSH tunnel exited with code ${code}`));
+        }
+      });
+
+      // Timeout after 30 seconds
+      setTimeout(() => {
+        if (!resolved) {
+          reject(new Error('Timeout waiting for localhost.run tunnel'));
+        }
+      }, 30000);
+    });
+  }
+
+  getUrl() {
+    return this.url;
+  }
+
+  stop() {
+    if (this.process) {
+      this.process.kill();
+      console.log(`[Tunnel] localhost.run tunnel closed`);
+    }
+  }
+}
+
 // ngrok Tunnel (spawns ngrok CLI)
 export class TunnelManager {
   constructor() {

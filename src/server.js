@@ -7,7 +7,7 @@ import qrcode from 'qrcode-terminal';
 import QRCode from 'qrcode';
 import { SessionManager } from './session-manager.js';
 import { TokenAuth, RateLimiter } from './auth.js';
-import { TunnelManager, CloudflareTunnel } from './tunnel.js';
+import { TunnelManager, CloudflareTunnel, LocalhostRunTunnel } from './tunnel.js';
 import { CommandManager } from './commands.js';
 import { runSetup } from './setup.js';
 
@@ -16,7 +16,7 @@ const __dirname = dirname(__filename);
 
 // Configuration
 const PORT = process.env.PORT || 3000;
-const TUNNEL_TYPE = process.env.TUNNEL || 'cloudflare';
+const TUNNEL_TYPE = process.env.TUNNEL || 'localhost.run';
 const NGROK_TOKEN = process.env.NGROK_AUTHTOKEN || null;
 const TOKEN_LIFETIME = parseInt(process.env.TOKEN_LIFETIME) || 24 * 60 * 60 * 1000; // 24h
 const TOKEN_ROTATION = parseInt(process.env.TOKEN_ROTATION) || 12 * 60 * 60 * 1000; // 12h
@@ -564,9 +564,13 @@ async function start() {
       if (TUNNEL_TYPE === 'cloudflare') {
         const tunnel = new CloudflareTunnel();
         currentTunnelUrl = await tunnel.start(actualPort);
-      } else {
+      } else if (TUNNEL_TYPE === 'ngrok') {
         const tunnel = new TunnelManager();
         currentTunnelUrl = await tunnel.startNgrok(actualPort, NGROK_TOKEN);
+      } else {
+        // Default: localhost.run (instant, no signup)
+        const tunnel = new LocalhostRunTunnel();
+        currentTunnelUrl = await tunnel.start(actualPort);
       }
     } catch (error) {
       console.error('');

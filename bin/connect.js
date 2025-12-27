@@ -6,7 +6,8 @@
  *        connect (if installed globally)
  *
  * Options:
- *   --ngrok              Use ngrok instead of cloudflared
+ *   --cloudflare         Use Cloudflare Tunnel
+ *   --ngrok              Use ngrok
  *   --ngrok-token TOKEN  Use authenticated ngrok
  *   --port PORT          Custom port (default: 3000)
  *   --skip-setup         Skip dependency checks
@@ -25,24 +26,31 @@ if (args.includes('--help') || args.includes('-h')) {
     npx terminal-connect [options]
 
   Options:
-    --ngrok              Use ngrok instead of cloudflared (default)
-    --ngrok-token TOKEN  Use authenticated ngrok with token
+    --cloudflare         Use Cloudflare Tunnel instead of localhost.run
+    --ngrok              Use ngrok (requires auth token)
+    --ngrok-token TOKEN  Use ngrok with auth token
     --port PORT          Custom port (default: 3000)
     --skip-setup         Skip dependency checks
     --help, -h           Show this help message
 
   Examples:
-    connect                      # Start with cloudflared (default)
-    connect --ngrok              # Use ngrok instead
+    connect                      # Start with localhost.run (default, instant)
+    connect --cloudflare         # Use Cloudflare Tunnel
+    connect --ngrok              # Use ngrok
     connect --port 8080          # Use custom port
     connect --skip-setup         # Skip setup wizard
 
   Environment Variables:
     PORT              Server port (default: 3000)
-    TUNNEL            Tunnel provider: 'cloudflare' or 'ngrok'
+    TUNNEL            Tunnel provider: 'localhost.run', 'cloudflare', or 'ngrok'
     NGROK_AUTHTOKEN   ngrok authentication token
 `);
   process.exit(0);
+}
+
+// Parse --cloudflare flag
+if (args.includes('--cloudflare')) {
+  process.env.TUNNEL = 'cloudflare';
 }
 
 // Parse --ngrok flag
