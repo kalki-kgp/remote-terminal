@@ -75,6 +75,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 cp -r "$SCRIPT_DIR/src" "$INSTALL_DIR/"
 cp -r "$SCRIPT_DIR/public" "$INSTALL_DIR/"
+cp -r "$SCRIPT_DIR/scripts" "$INSTALL_DIR/"
+cp -r "$SCRIPT_DIR/bin" "$INSTALL_DIR/"
 cp "$SCRIPT_DIR/package.json" "$INSTALL_DIR/"
 
 # Install dependencies

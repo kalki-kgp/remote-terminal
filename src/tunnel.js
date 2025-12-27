@@ -92,12 +92,15 @@ export class CloudflareTunnel {
       });
 
       let output = '';
+      let resolved = false;
 
       this.process.stderr.on('data', (data) => {
         output += data.toString();
+
         // Cloudflare outputs the URL to stderr
         const match = output.match(/https:\/\/[a-z0-9-]+\.trycloudflare\.com/);
-        if (match && !this.url) {
+        if (match && !resolved) {
+          resolved = true;
           this.url = match[0];
           console.log(`[Tunnel] Cloudflare tunnel established`);
           resolve(this.url);
@@ -105,6 +108,7 @@ export class CloudflareTunnel {
       });
 
       this.process.on('error', (error) => {
+        if (resolved) return;
         if (error.code === 'ENOENT') {
           reject(new Error('cloudflared not found. Install with: brew install cloudflared'));
         } else {
@@ -113,14 +117,14 @@ export class CloudflareTunnel {
       });
 
       this.process.on('close', (code) => {
-        if (!this.url) {
+        if (!resolved) {
           reject(new Error(`cloudflared exited with code ${code}`));
         }
       });
 
       // Timeout after 30 seconds
       setTimeout(() => {
-        if (!this.url) {
+        if (!resolved) {
           reject(new Error('Timeout waiting for cloudflare tunnel URL'));
         }
       }, 30000);

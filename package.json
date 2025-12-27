@@ -1,6 +1,6 @@
 {
   "name": "terminal-connect",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "description": "Access your terminal from anywhere via browser. Self-hosted, cross-platform (macOS, Windows, Linux), with tmux integration.",
   "main": "src/server.js",
   "type": "module",
@@ -30,7 +30,9 @@
     "browser",
     "mobile",
     "self-hosted",
-    "cross-platform"
+    "cross-platform",
+    "cloudflare",
+    "tunnel"
   ],
   "author": "kalki-kgp",
   "license": "MIT",

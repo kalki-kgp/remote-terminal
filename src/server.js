@@ -16,7 +16,7 @@ const __dirname = dirname(__filename);
 
 // Configuration
 const PORT = process.env.PORT || 3000;
-const TUNNEL_TYPE = process.env.TUNNEL || 'ngrok';
+const TUNNEL_TYPE = process.env.TUNNEL || 'cloudflare';
 const NGROK_TOKEN = process.env.NGROK_AUTHTOKEN || null;
 const TOKEN_LIFETIME = parseInt(process.env.TOKEN_LIFETIME) || 24 * 60 * 60 * 1000; // 24h
 const TOKEN_ROTATION = parseInt(process.env.TOKEN_ROTATION) || 12 * 60 * 60 * 1000; // 12h
@@ -24,7 +24,7 @@ const TOKEN_ROTATION = parseInt(process.env.TOKEN_ROTATION) || 12 * 60 * 60 * 10
 // Initialize components
 const app = express();
 const server = createServer(app);
-const wss = new WebSocketServer({ server });
+let wss = null; // Created after server binds to port
 const sessionManager = new SessionManager();
 const auth = new TokenAuth({
   tokenLifetime: TOKEN_LIFETIME,
@@ -120,117 +120,6 @@ function getClientIP(req) {
          req.socket.remoteAddress ||
          'unknown';
 }
-
-// WebSocket connection handling
-wss.on('connection', (ws, req) => {
-  const url = new URL(req.url, `http://${req.headers.host}`);
-  const token = url.searchParams.get('token');
-  const reconnectVisitorId = url.searchParams.get('visitorId');
-  const clientIP = getClientIP(req);
-
-  // Check rate limiting
-  const rateCheck = rateLimiter.isAllowed(clientIP);
-  if (!rateCheck.allowed) {
-    console.log(`[WS] Rate limited: ${clientIP} (retry after ${rateCheck.retryAfter}s)`);
-    ws.close(4029, JSON.stringify({
-      error: 'rate_limited',
-      retryAfter: rateCheck.retryAfter,
-      message: rateCheck.reason,
-    }));
-    return;
-  }
-
-  // Check if this is an authorized visitor reconnecting
-  const isAuthorizedReconnect = reconnectVisitorId && auth.isVisitorAuthorized(reconnectVisitorId);
-
-  if (isAuthorizedReconnect) {
-    console.log(`[WS] Authorized visitor reconnecting: ${reconnectVisitorId}`);
-    rateLimiter.recordSuccess(clientIP);
-  } else {
-    // New connection - validate token
-    if (!auth.validateToken(token)) {
-      console.log(`[WS] Invalid token from ${clientIP}`);
-      rateLimiter.recordFailure(clientIP);
-      ws.close(4001, 'Invalid token');
-      return;
-    }
-
-    // Successful auth - reset rate limit counter
-    rateLimiter.recordSuccess(clientIP);
-  }
-
-  // Use existing visitor ID or create new one
-  const visitorId = reconnectVisitorId || `visitor-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-
-  // If this is a new connection (not a reconnect), consume the token
-  if (!isAuthorizedReconnect) {
-    auth.consumeToken(visitorId);
-  }
-
-  console.log(`[WS] Connection established: ${visitorId} (reconnect: ${!!reconnectVisitorId})`);
-
-  // Track this connection
-  if (!wsConnections.has(visitorId)) {
-    wsConnections.set(visitorId, new Set());
-  }
-  wsConnections.get(visitorId).add(ws);
-
-  // Get or create visitor session
-  const visitor = sessionManager.getOrCreateVisitor(visitorId);
-
-  // Create initial terminal if none exist
-  if (visitor.terminals.size === 0) {
-    const terminal = sessionManager.createTerminal(visitorId);
-    setupTerminalListeners(visitorId, terminal);
-  }
-
-  // Send session info with tmux status
-  ws.send(JSON.stringify({
-    type: 'session',
-    visitorId,
-    terminals: sessionManager.getTerminals(visitorId),
-    tmux: sessionManager.getTmuxInfo(),
-  }));
-
-  // Send buffered output for reconnection
-  for (const terminalInfo of sessionManager.getTerminals(visitorId)) {
-    const buffer = sessionManager.getTerminalBuffer(terminalInfo.id);
-    if (buffer) {
-      ws.send(JSON.stringify({
-        type: 'output',
-        terminalId: terminalInfo.id,
-        data: buffer,
-      }));
-    }
-  }
-
-  // Handle incoming messages
-  ws.on('message', (message) => {
-    try {
-      const msg = JSON.parse(message.toString());
-      handleMessage(visitorId, ws, msg);
-    } catch (error) {
-      console.error(`[WS] Error parsing message: ${error.message}`);
-    }
-  });
-
-  // Handle disconnect
-  ws.on('close', () => {
-    console.log(`[WS] Connection closed: ${visitorId}`);
-    const connections = wsConnections.get(visitorId);
-    if (connections) {
-      connections.delete(ws);
-      if (connections.size === 0) {
-        // Keep session alive for reconnection, don't clean up immediately
-        console.log(`[WS] No more connections for ${visitorId}, session preserved for reconnection`);
-      }
-    }
-  });
-
-  ws.on('error', (error) => {
-    console.error(`[WS] Error: ${visitorId} - ${error.message}`);
-  });
-});
 
 function setupTerminalListeners(visitorId, terminalInfo) {
   const { id: terminalId, pty } = terminalInfo;
@@ -506,6 +395,148 @@ function displayAccessInfo(tunnelUrl, token, isRegenerated = false) {
   }
 }
 
+// Try to start server on a port, with fallback
+function tryListen(port, maxAttempts = 10) {
+  return new Promise((resolve, reject) => {
+    const basePort = parseInt(process.env.PORT || 3000);
+
+    const onError = (err) => {
+      server.removeListener('error', onError);
+      if (err.code === 'EADDRINUSE') {
+        if (port - basePort < maxAttempts) {
+          console.log(`\x1b[33m[Server] Port ${port} in use, trying ${port + 1}...\x1b[0m`);
+          resolve(tryListen(port + 1, maxAttempts));
+        } else {
+          reject(new Error(`All ports ${basePort}-${port} are in use. Try: lsof -ti:${basePort} | xargs kill -9`));
+        }
+      } else {
+        reject(err);
+      }
+    };
+
+    server.once('error', onError);
+    server.listen(port, () => {
+      server.removeListener('error', onError);
+      resolve(port);
+    });
+  });
+}
+
+// Initialize WebSocket server (called after HTTP server binds)
+function initWebSocket() {
+  wss = new WebSocketServer({ server });
+
+  wss.on('connection', (ws, req) => {
+    const url = new URL(req.url, `http://${req.headers.host}`);
+    const token = url.searchParams.get('token');
+    const reconnectVisitorId = url.searchParams.get('visitorId');
+    const clientIP = getClientIP(req);
+
+    // Check rate limiting
+    const rateCheck = rateLimiter.isAllowed(clientIP);
+    if (!rateCheck.allowed) {
+      console.log(`[WS] Rate limited: ${clientIP} (retry after ${rateCheck.retryAfter}s)`);
+      ws.close(4029, JSON.stringify({
+        error: 'rate_limited',
+        retryAfter: rateCheck.retryAfter,
+        message: rateCheck.reason,
+      }));
+      return;
+    }
+
+    // Check if this is an authorized visitor reconnecting
+    const isAuthorizedReconnect = reconnectVisitorId && auth.isVisitorAuthorized(reconnectVisitorId);
+
+    if (isAuthorizedReconnect) {
+      console.log(`[WS] Authorized visitor reconnecting: ${reconnectVisitorId}`);
+      rateLimiter.recordSuccess(clientIP);
+    } else {
+      // New connection - validate token
+      if (!auth.validateToken(token)) {
+        console.log(`[WS] Invalid token from ${clientIP}`);
+        rateLimiter.recordFailure(clientIP);
+        ws.close(4001, 'Invalid token');
+        return;
+      }
+
+      // Successful auth - reset rate limit counter
+      rateLimiter.recordSuccess(clientIP);
+    }
+
+    // Use existing visitor ID or create new one
+    const visitorId = reconnectVisitorId || `visitor-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+    // If this is a new connection (not a reconnect), consume the token
+    if (!isAuthorizedReconnect) {
+      auth.consumeToken(visitorId);
+    }
+
+    console.log(`[WS] Connection established: ${visitorId} (reconnect: ${!!reconnectVisitorId})`);
+
+    // Track this connection
+    if (!wsConnections.has(visitorId)) {
+      wsConnections.set(visitorId, new Set());
+    }
+    wsConnections.get(visitorId).add(ws);
+
+    // Get or create visitor session
+    const visitor = sessionManager.getOrCreateVisitor(visitorId);
+
+    // Create initial terminal if none exist
+    if (visitor.terminals.size === 0) {
+      const terminal = sessionManager.createTerminal(visitorId);
+      setupTerminalListeners(visitorId, terminal);
+    }
+
+    // Send session info with tmux status
+    ws.send(JSON.stringify({
+      type: 'session',
+      visitorId,
+      terminals: sessionManager.getTerminals(visitorId),
+      tmux: sessionManager.getTmuxInfo(),
+    }));
+
+    // Send buffered output for reconnection
+    for (const terminalInfo of sessionManager.getTerminals(visitorId)) {
+      const buffer = sessionManager.getTerminalBuffer(terminalInfo.id);
+      if (buffer) {
+        ws.send(JSON.stringify({
+          type: 'output',
+          terminalId: terminalInfo.id,
+          data: buffer,
+        }));
+      }
+    }
+
+    // Handle incoming messages
+    ws.on('message', (message) => {
+      try {
+        const msg = JSON.parse(message.toString());
+        handleMessage(visitorId, ws, msg);
+      } catch (error) {
+        console.error(`[WS] Error parsing message: ${error.message}`);
+      }
+    });
+
+    // Handle disconnect
+    ws.on('close', () => {
+      console.log(`[WS] Connection closed: ${visitorId}`);
+      const connections = wsConnections.get(visitorId);
+      if (connections) {
+        connections.delete(ws);
+        if (connections.size === 0) {
+          // Keep session alive for reconnection, don't clean up immediately
+          console.log(`[WS] No more connections for ${visitorId}, session preserved for reconnection`);
+        }
+      }
+    });
+
+    ws.on('error', (error) => {
+      console.error(`[WS] Error: ${visitorId} - ${error.message}`);
+    });
+  });
+}
+
 // Start server and tunnel
 async function start() {
   // Run setup check unless --skip-setup flag is passed
@@ -514,12 +545,17 @@ async function start() {
     await runSetup();
   }
 
-  server.listen(PORT, async () => {
+  try {
+    const actualPort = await tryListen(parseInt(PORT));
+
+    // Initialize WebSocket server after HTTP server is bound
+    initWebSocket();
+
     console.log('');
     console.log('╔═══════════════════════════════════════════════════════════╗');
     console.log('║           🖥️  Connect Server                                ║');
     console.log('╠═══════════════════════════════════════════════════════════╣');
-    console.log(`║  Local:  http://localhost:${PORT}                            ║`);
+    console.log(`║  Local:  http://localhost:${actualPort}                            ║`);
     console.log('╚═══════════════════════════════════════════════════════════╝');
     console.log('');
 
@@ -527,10 +563,10 @@ async function start() {
     try {
       if (TUNNEL_TYPE === 'cloudflare') {
         const tunnel = new CloudflareTunnel();
-        currentTunnelUrl = await tunnel.start(PORT);
+        currentTunnelUrl = await tunnel.start(actualPort);
       } else {
         const tunnel = new TunnelManager();
-        currentTunnelUrl = await tunnel.startNgrok(PORT, NGROK_TOKEN);
+        currentTunnelUrl = await tunnel.startNgrok(actualPort, NGROK_TOKEN);
       }
     } catch (error) {
       console.error('');
@@ -562,7 +598,11 @@ async function start() {
     console.log('╚═══════════════════════════════════════════════════════════╝');
     console.log('');
     console.log('Press Ctrl+C to stop the server');
-  });
+  } catch (error) {
+    console.error(`\x1b[31m[Server] ${error.message}\x1b[0m`);
+    console.error('Try: lsof -ti:3000 | xargs kill -9');
+    process.exit(1);
+  }
 }
 
 // Graceful shutdown

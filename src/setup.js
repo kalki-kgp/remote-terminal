@@ -210,6 +210,220 @@ function checkTmux() {
   }
 }
 
+// Check if cloudflared is installed
+function checkCloudflared() {
+  try {
+    if (isWindows) {
+      execSync('where cloudflared', { encoding: 'utf8', timeout: 5000 });
+    } else {
+      execSync('which cloudflared', { encoding: 'utf8', timeout: 5000 });
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Install cloudflared on macOS
+async function installCloudflaredMac() {
+  // Check if Homebrew is installed
+  try {
+    execSync('which brew', { encoding: 'utf8' });
+  } catch {
+    console.log();
+    box([
+      `${c.yellow}Homebrew not found!${c.reset}`,
+      ``,
+      `${c.dim}Install Homebrew first:${c.reset}`,
+      `${c.cyan}/bin/bash -c "$(curl -fsSL${c.reset}`,
+      `${c.cyan}  https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"${c.reset}`,
+      ``,
+      `${c.dim}Then run:${c.reset} ${c.cyan}brew install cloudflared${c.reset}`,
+    ], c.yellow);
+    return false;
+  }
+
+  console.log();
+  box([
+    `${c.bold}${c.purple}🍺 Installing cloudflared via Homebrew${c.reset}`,
+    `${c.dim}This enables secure tunneling...${c.reset}`,
+  ], c.purple);
+  console.log();
+
+  const spinner = new Spinner('Brewing cloudflared...');
+  spinner.start();
+
+  return new Promise((resolve) => {
+    const child = spawn('brew', ['install', 'cloudflared'], {
+      stdio: ['inherit', 'pipe', 'pipe'],
+    });
+
+    const messages = ['Brewing cloudflared...', 'Downloading...', 'Installing...', 'Almost ready...'];
+    let msgIndex = 0;
+    const updateInterval = setInterval(() => {
+      spinner.update(messages[msgIndex % messages.length]);
+      msgIndex++;
+    }, 2000);
+
+    child.on('close', async (code) => {
+      clearInterval(updateInterval);
+
+      if (code === 0) {
+        spinner.stop('cloudflared installed successfully!', true);
+        await sleep(300);
+        successBanner('Tunnel ready!');
+        resolve(true);
+      } else {
+        spinner.stop('Installation failed', false);
+        console.log();
+        box([
+          `${c.red}Oops! Something went wrong.${c.reset}`,
+          `${c.dim}Try:${c.reset} ${c.cyan}brew install cloudflared${c.reset}`,
+        ], c.red);
+        resolve(false);
+      }
+    });
+
+    child.on('error', () => {
+      clearInterval(updateInterval);
+      spinner.stop('Installation failed', false);
+      resolve(false);
+    });
+  });
+}
+
+// Install cloudflared on Linux
+async function installCloudflaredLinux() {
+  console.log();
+  box([
+    `${c.bold}${c.purple}📦 Installing cloudflared${c.reset}`,
+    `${c.dim}Downloading from Cloudflare...${c.reset}`,
+  ], c.purple);
+  console.log();
+
+  const spinner = new Spinner('Detecting system architecture...');
+  spinner.start();
+
+  // Detect architecture
+  let arch;
+  try {
+    const uname = execSync('uname -m', { encoding: 'utf8' }).trim();
+    if (uname === 'x86_64' || uname === 'amd64') {
+      arch = 'amd64';
+    } else if (uname === 'aarch64' || uname === 'arm64') {
+      arch = 'arm64';
+    } else if (uname.startsWith('arm')) {
+      arch = 'arm';
+    } else {
+      arch = 'amd64'; // fallback
+    }
+  } catch {
+    arch = 'amd64';
+  }
+
+  spinner.update(`Downloading cloudflared (${arch})...`);
+
+  return new Promise((resolve) => {
+    const url = `https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${arch}`;
+    const installPath = '/usr/local/bin/cloudflared';
+
+    // Try to download and install
+    const child = spawn('bash', ['-c', `
+      curl -L --progress-bar "${url}" -o /tmp/cloudflared && \
+      chmod +x /tmp/cloudflared && \
+      sudo mv /tmp/cloudflared ${installPath}
+    `], {
+      stdio: ['inherit', 'pipe', 'pipe'],
+    });
+
+    child.on('close', async (code) => {
+      if (code === 0) {
+        spinner.stop('cloudflared installed successfully!', true);
+        await sleep(300);
+        successBanner('Tunnel ready!');
+        resolve(true);
+      } else {
+        spinner.stop('Installation failed', false);
+        console.log();
+        box([
+          `${c.yellow}Could not auto-install cloudflared${c.reset}`,
+          ``,
+          `${c.dim}Try manually:${c.reset}`,
+          `${c.cyan}curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${arch} -o cloudflared${c.reset}`,
+          `${c.cyan}chmod +x cloudflared${c.reset}`,
+          `${c.cyan}sudo mv cloudflared /usr/local/bin/${c.reset}`,
+        ], c.yellow);
+        resolve(false);
+      }
+    });
+
+    child.on('error', () => {
+      spinner.stop('Installation failed', false);
+      resolve(false);
+    });
+  });
+}
+
+// Install cloudflared on Windows
+async function installCloudflaredWindows() {
+  console.log();
+  box([
+    `${c.bold}${c.purple}📦 Installing cloudflared${c.reset}`,
+    `${c.dim}Downloading from Cloudflare...${c.reset}`,
+  ], c.purple);
+  console.log();
+
+  const spinner = new Spinner('Downloading cloudflared...');
+  spinner.start();
+
+  return new Promise((resolve) => {
+    // Use PowerShell to download and install
+    const script = `
+      $url = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
+      $dest = "$env:LOCALAPPDATA\\cloudflared"
+      New-Item -ItemType Directory -Force -Path $dest | Out-Null
+      Invoke-WebRequest -Uri $url -OutFile "$dest\\cloudflared.exe"
+      $currentPath = [Environment]::GetEnvironmentVariable("Path", "User")
+      if ($currentPath -notlike "*$dest*") {
+        [Environment]::SetEnvironmentVariable("Path", "$currentPath;$dest", "User")
+      }
+    `;
+
+    const child = spawn('powershell', ['-Command', script], {
+      stdio: ['inherit', 'pipe', 'pipe'],
+    });
+
+    child.on('close', async (code) => {
+      if (code === 0) {
+        spinner.stop('cloudflared installed successfully!', true);
+        await sleep(300);
+        successBanner('Tunnel ready!');
+        console.log();
+        box([
+          `${c.cyan}Note: You may need to restart your terminal${c.reset}`,
+          `${c.dim}for the PATH changes to take effect.${c.reset}`,
+        ], c.cyan);
+        resolve(true);
+      } else {
+        spinner.stop('Installation failed', false);
+        console.log();
+        box([
+          `${c.yellow}Could not auto-install cloudflared${c.reset}`,
+          ``,
+          `${c.dim}Download manually from:${c.reset}`,
+          `${c.cyan}https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/${c.reset}`,
+        ], c.yellow);
+        resolve(false);
+      }
+    });
+
+    child.on('error', () => {
+      spinner.stop('Installation failed', false);
+      resolve(false);
+    });
+  });
+}
+
 // Install tmux in WSL
 async function installTmuxInWSL() {
   console.log();
@@ -593,6 +807,54 @@ export async function runSetup() {
     } else {
       spinner.stop('tmux is ready!', true);
     }
+  }
+
+  // Check for cloudflared (tunnel provider)
+  console.log();
+  const cfSpinner = new Spinner('Checking for cloudflared (tunnel)...');
+  cfSpinner.start();
+  await sleep(600);
+
+  const hasCloudflared = checkCloudflared();
+
+  if (!hasCloudflared) {
+    cfSpinner.stop('cloudflared not found', false);
+
+    console.log();
+    box([
+      `${c.bold}${c.yellow}cloudflared is not installed${c.reset}`,
+      ``,
+      `${c.white}cloudflared enables:${c.reset}`,
+      `  ${c.green}●${c.reset} Secure public URL for your terminal`,
+      `  ${c.green}●${c.reset} No account or setup required`,
+      `  ${c.green}●${c.reset} Free, no connection limits`,
+    ], c.yellow);
+
+    const install = await ask('Install cloudflared now?');
+
+    if (install) {
+      if (isWindows) {
+        await installCloudflaredWindows();
+      } else if (process.platform === 'darwin') {
+        await installCloudflaredMac();
+      } else {
+        await installCloudflaredLinux();
+      }
+    } else {
+      box([
+        `${c.dim}Skipping cloudflared installation${c.reset}`,
+        `${c.dim}You can still use --ngrok if you have it${c.reset}`,
+        ``,
+        `${c.dim}Or install later:${c.reset}`,
+        isWindows
+          ? `${c.cyan}https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/${c.reset}`
+          : process.platform === 'darwin'
+            ? `${c.cyan}brew install cloudflared${c.reset}`
+            : `${c.cyan}See: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/${c.reset}`,
+      ], c.dim);
+    }
+  } else {
+    cfSpinner.stop('cloudflared is ready!', true);
   }
 
   // Final ready message

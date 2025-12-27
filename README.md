@@ -76,9 +76,10 @@ connect --skip-setup         # Skip dependency checks
 ### Options
 
 ```bash
-connect --cloudflare         # Use Cloudflare Tunnel instead of ngrok
+connect --ngrok              # Use ngrok instead of cloudflared
 connect --ngrok-token TOKEN  # Use authenticated ngrok
 connect --port 8080          # Custom port (default: 3000)
+connect --help               # Show help
 ```
 
 ### Environment Variables
@@ -86,7 +87,7 @@ connect --port 8080          # Custom port (default: 3000)
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PORT` | 3000 | Server port |
-| `TUNNEL` | ngrok | Tunnel provider (`ngrok` or `cloudflare`) |
+| `TUNNEL` | cloudflare | Tunnel provider (`cloudflare` or `ngrok`) |
 | `NGROK_AUTHTOKEN` | - | ngrok authentication token |
 | `TOKEN_LIFETIME` | 86400000 | Token lifetime in ms (24h) |
 | `TOKEN_ROTATION` | 43200000 | Token rotation interval (12h) |
@@ -170,12 +171,27 @@ On mobile, a keyboard bar provides quick access to:
 
 ## Troubleshooting
 
-### "ngrok session limit reached"
+### "cloudflared not found"
+
+The setup wizard will auto-install cloudflared. Manual install:
+```bash
+# macOS
+brew install cloudflared
+
+# Linux
+curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
+chmod +x cloudflared && sudo mv cloudflared /usr/local/bin/
+
+# Windows - download from:
+# https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/
+```
+
+### "ngrok session limit reached" (if using --ngrok)
 
 Free ngrok allows 1 tunnel. Solutions:
 ```bash
 pkill ngrok                  # Close other ngrok instances
-connect --cloudflare         # Use Cloudflare instead (free, no limits)
+connect                      # Use cloudflared instead (default, free, no limits)
 ```
 
 ### "Port already in use"
