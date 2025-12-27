@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Remote Terminal Installer for macOS (M Series)
-# This script installs the remote-terminal application
+# Connect Installer for macOS (M Series)
+# This script installs the connect application
 
 set -e
 
@@ -13,11 +13,11 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Installation directory
-INSTALL_DIR="$HOME/.remote-terminal"
+INSTALL_DIR="$HOME/.connect"
 
 echo ""
 echo -e "${BLUE}╔═══════════════════════════════════════════════════════════╗${NC}"
-echo -e "${BLUE}║           🖥️  Remote Terminal Installer                    ║${NC}"
+echo -e "${BLUE}║           🖥️  Connect Installer                            ║${NC}"
 echo -e "${BLUE}╚═══════════════════════════════════════════════════════════╝${NC}"
 echo ""
 
@@ -70,7 +70,7 @@ echo -e "${BLUE}Creating installation directory...${NC}"
 mkdir -p "$INSTALL_DIR"
 
 # Copy files
-echo -e "${BLUE}Installing remote-terminal...${NC}"
+echo -e "${BLUE}Installing connect...${NC}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 cp -r "$SCRIPT_DIR/src" "$INSTALL_DIR/"
@@ -93,12 +93,12 @@ fi
 
 # Create launcher script
 echo -e "${BLUE}Creating launcher script...${NC}"
-cat > "$INSTALL_DIR/remote-terminal" << 'EOF'
+cat > "$INSTALL_DIR/connect" << 'EOF'
 #!/bin/bash
 
-# Remote Terminal Launcher
+# Connect Launcher
 
-INSTALL_DIR="$HOME/.remote-terminal"
+INSTALL_DIR="$HOME/.connect"
 
 # Parse arguments
 TUNNEL="ngrok"
@@ -117,7 +117,7 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         -h|--help)
-            echo "Usage: remote-terminal [options]"
+            echo "Usage: connect [options]"
             echo ""
             echo "Options:"
             echo "  --cloudflare      Use Cloudflare Tunnel instead of ngrok"
@@ -139,12 +139,12 @@ cd "$INSTALL_DIR"
 node src/server.js
 EOF
 
-chmod +x "$INSTALL_DIR/remote-terminal"
+chmod +x "$INSTALL_DIR/connect"
 
 # Create symlink in /usr/local/bin
 echo -e "${BLUE}Creating command symlink...${NC}"
 sudo mkdir -p /usr/local/bin
-sudo ln -sf "$INSTALL_DIR/remote-terminal" /usr/local/bin/remote-terminal
+sudo ln -sf "$INSTALL_DIR/connect" /usr/local/bin/connect
 
 # Optional: Install cloudflared for Cloudflare Tunnel support
 echo ""
@@ -170,8 +170,8 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     NODE_PATH=$(which node)
 
     # Copy and configure plist
-    PLIST_SRC="$SCRIPT_DIR/scripts/com.remote-terminal.plist"
-    PLIST_DEST="$HOME/Library/LaunchAgents/com.remote-terminal.plist"
+    PLIST_SRC="$SCRIPT_DIR/scripts/com.connect.plist"
+    PLIST_DEST="$HOME/Library/LaunchAgents/com.connect.plist"
 
     if [[ -f "$PLIST_SRC" ]]; then
         # Replace placeholders
@@ -193,30 +193,30 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
 fi
 
 # Create daemon control script
-cat > "$INSTALL_DIR/remote-terminal-ctl" << 'CTLEOF'
+cat > "$INSTALL_DIR/connect-ctl" << 'CTLEOF'
 #!/bin/bash
 
-# Remote Terminal Control Script
+# Connect Control Script
 
-PLIST="$HOME/Library/LaunchAgents/com.remote-terminal.plist"
-INSTALL_DIR="$HOME/.remote-terminal"
+PLIST="$HOME/Library/LaunchAgents/com.connect.plist"
+INSTALL_DIR="$HOME/.connect"
 
 case "$1" in
     start)
         if [[ -f "$PLIST" ]]; then
             launchctl load "$PLIST" 2>/dev/null
-            echo "Remote Terminal started (daemon mode)"
+            echo "Connect started (daemon mode)"
         else
-            echo "LaunchAgent not installed. Run: remote-terminal"
+            echo "LaunchAgent not installed. Run: connect"
         fi
         ;;
     stop)
         if [[ -f "$PLIST" ]]; then
             launchctl unload "$PLIST" 2>/dev/null
-            echo "Remote Terminal stopped"
+            echo "Connect stopped"
         else
-            pkill -f "node.*remote-terminal" 2>/dev/null
-            echo "Remote Terminal stopped"
+            pkill -f "node.*connect" 2>/dev/null
+            echo "Connect stopped"
         fi
         ;;
     restart)
@@ -225,11 +225,11 @@ case "$1" in
         $0 start
         ;;
     status)
-        if pgrep -f "node.*remote-terminal" > /dev/null; then
-            echo "Remote Terminal is running"
-            pgrep -f "node.*remote-terminal"
+        if pgrep -f "node.*connect" > /dev/null; then
+            echo "Connect is running"
+            pgrep -f "node.*connect"
         else
-            echo "Remote Terminal is not running"
+            echo "Connect is not running"
         fi
         ;;
     logs)
@@ -254,7 +254,7 @@ case "$1" in
         fi
         ;;
     *)
-        echo "Usage: remote-terminal-ctl {start|stop|restart|status|logs|enable|disable}"
+        echo "Usage: connect-ctl {start|stop|restart|status|logs|enable|disable}"
         echo ""
         echo "Commands:"
         echo "  start    - Start the server (daemon mode)"
@@ -269,21 +269,21 @@ case "$1" in
 esac
 CTLEOF
 
-chmod +x "$INSTALL_DIR/remote-terminal-ctl"
-sudo ln -sf "$INSTALL_DIR/remote-terminal-ctl" /usr/local/bin/remote-terminal-ctl
+chmod +x "$INSTALL_DIR/connect-ctl"
+sudo ln -sf "$INSTALL_DIR/connect-ctl" /usr/local/bin/connect-ctl
 
 echo ""
 echo -e "${GREEN}╔═══════════════════════════════════════════════════════════╗${NC}"
 echo -e "${GREEN}║           ✅ Installation Complete!                        ║${NC}"
 echo -e "${GREEN}╠═══════════════════════════════════════════════════════════╣${NC}"
 echo -e "${GREEN}║                                                           ║${NC}"
-echo -e "${GREEN}║  To start the remote terminal server:                     ║${NC}"
+echo -e "${GREEN}║  To start the server:                                     ║${NC}"
 echo -e "${GREEN}║                                                           ║${NC}"
-echo -e "${GREEN}║    remote-terminal          (foreground)                  ║${NC}"
-echo -e "${GREEN}║    remote-terminal-ctl start (daemon)                     ║${NC}"
+echo -e "${GREEN}║    connect              (foreground)                      ║${NC}"
+echo -e "${GREEN}║    connect-ctl start    (daemon)                          ║${NC}"
 echo -e "${GREEN}║                                                           ║${NC}"
 echo -e "${GREEN}║  Daemon control:                                          ║${NC}"
-echo -e "${GREEN}║    remote-terminal-ctl status|stop|restart|logs           ║${NC}"
+echo -e "${GREEN}║    connect-ctl status|stop|restart|logs                   ║${NC}"
 echo -e "${GREEN}║                                                           ║${NC}"
 echo -e "${GREEN}║  Options:                                                 ║${NC}"
 echo -e "${GREEN}║    --cloudflare     Use Cloudflare Tunnel                 ║${NC}"

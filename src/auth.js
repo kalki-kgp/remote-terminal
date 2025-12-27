@@ -11,6 +11,9 @@ export class TokenAuth {
     this.previousToken = null; // Grace period for old token
     this.previousTokenExpiry = null;
     this.authenticated = new Set();
+    this.authorizedVisitors = new Set(); // Visitors who can reconnect without token
+    this.tokenConsumed = false; // One-time token flag
+    this.onTokenRegenerated = null; // Callback when token is regenerated
 
     // Start auto-rotation if enabled
     if (this.autoRotate) {
@@ -37,6 +40,12 @@ export class TokenAuth {
   validateToken(providedToken) {
     if (!providedToken) return false;
 
+    // Check if token already consumed
+    if (this.tokenConsumed) {
+      console.log('[Auth] Token already consumed (one-time use)');
+      return false;
+    }
+
     const now = Date.now();
 
     // Check current token
@@ -58,6 +67,53 @@ export class TokenAuth {
     }
 
     return false;
+  }
+
+  // Check if visitor is authorized to reconnect without token
+  isVisitorAuthorized(visitorId) {
+    return visitorId && this.authorizedVisitors.has(visitorId);
+  }
+
+  // Consume token (one-time use) and authorize the visitor
+  consumeToken(visitorId) {
+    if (this.tokenConsumed) return false;
+
+    this.tokenConsumed = true;
+    this.authorizedVisitors.add(visitorId);
+    console.log(`[Auth] Token consumed. Visitor ${visitorId} authorized.`);
+
+    // Generate new token for next connection
+    this.regenerateTokenForNextUse();
+
+    return true;
+  }
+
+  // Regenerate token for next device (keeps authorized visitors)
+  regenerateTokenForNextUse() {
+    this.previousToken = null;
+    this.previousTokenExpiry = null;
+    this.token = nanoid(32);
+    this.tokenCreatedAt = Date.now();
+    this.tokenConsumed = false; // Reset for next use
+
+    console.log('[Auth] New token generated for next device');
+
+    // Trigger callback to reprint QR
+    if (this.onTokenRegenerated) {
+      this.onTokenRegenerated(this.token);
+    }
+
+    return this.token;
+  }
+
+  // Set callback for when token is regenerated
+  setTokenRegeneratedCallback(callback) {
+    this.onTokenRegenerated = callback;
+  }
+
+  // Revoke a visitor's authorization
+  revokeVisitor(visitorId) {
+    this.authorizedVisitors.delete(visitorId);
   }
 
   markAuthenticated(sessionId) {

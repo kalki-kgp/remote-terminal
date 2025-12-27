@@ -30,3 +30,6 @@ Thumbs.db
 dist/
 build/
 
+# User data (favorite commands are per-installation)
+data/commands.json
+

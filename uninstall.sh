@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Remote Terminal Uninstaller
+# Connect Uninstaller
 
 set -e
 
@@ -9,16 +9,32 @@ GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
-INSTALL_DIR="$HOME/.remote-terminal"
+INSTALL_DIR="$HOME/.connect"
+PLIST="$HOME/Library/LaunchAgents/com.connect.plist"
 
 echo ""
-echo -e "${BLUE}Uninstalling Remote Terminal...${NC}"
+echo -e "${BLUE}Uninstalling Connect...${NC}"
 echo ""
 
-# Remove symlink
-if [[ -L /usr/local/bin/remote-terminal ]]; then
-    sudo rm /usr/local/bin/remote-terminal
-    echo -e "${GREEN}✓ Removed command symlink${NC}"
+# Stop daemon if running
+if [[ -f "$PLIST" ]]; then
+    launchctl unload "$PLIST" 2>/dev/null || true
+    rm "$PLIST"
+    echo -e "${GREEN}✓ Removed LaunchAgent${NC}"
+fi
+
+# Kill any running processes
+pkill -f "node.*connect" 2>/dev/null || true
+
+# Remove command symlinks
+if [[ -L /usr/local/bin/connect ]]; then
+    sudo rm /usr/local/bin/connect
+    echo -e "${GREEN}✓ Removed connect command${NC}"
+fi
+
+if [[ -L /usr/local/bin/connect-ctl ]]; then
+    sudo rm /usr/local/bin/connect-ctl
+    echo -e "${GREEN}✓ Removed connect-ctl command${NC}"
 fi
 
 # Remove installation directory
@@ -28,5 +44,5 @@ if [[ -d "$INSTALL_DIR" ]]; then
 fi
 
 echo ""
-echo -e "${GREEN}Remote Terminal has been uninstalled.${NC}"
+echo -e "${GREEN}Connect has been uninstalled.${NC}"
 echo ""

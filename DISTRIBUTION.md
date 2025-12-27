@@ -1,6 +1,6 @@
 # Distribution Guide
 
-This document outlines the various ways to distribute Remote Terminal to users.
+This document outlines the various ways to distribute Connect to users.
 
 ## Distribution Options
 
@@ -17,17 +17,17 @@ The most user-friendly option for macOS users.
 #### Create a Homebrew Tap
 
 ```bash
-# Create a new repo: homebrew-remote-terminal
-# Add formula file: Formula/remote-terminal.rb
+# Create a new repo: homebrew-connect
+# Add formula file: Formula/connect.rb
 ```
 
-**Formula template (`Formula/remote-terminal.rb`):**
+**Formula template (`Formula/connect.rb`):**
 
 ```ruby
-class RemoteTerminal < Formula
+class Connect < Formula
   desc "Browser-based remote terminal access for macOS"
-  homepage "https://github.com/anthropics/remote-terminal"
-  url "https://github.com/anthropics/remote-terminal/archive/refs/tags/v1.0.0.tar.gz"
+  homepage "https://github.com/anthropics/connect"
+  url "https://github.com/anthropics/connect/archive/refs/tags/v1.0.0.tar.gz"
   sha256 "SHA256_OF_TARBALL"
   license "MIT"
 
@@ -38,7 +38,7 @@ class RemoteTerminal < Formula
     libexec.install Dir["*"]
 
     # Create launcher script
-    (bin/"remote-terminal").write <<~EOS
+    (bin/"connect").write <<~EOS
       #!/bin/bash
       cd "#{libexec}"
       exec node src/server.js "$@"
@@ -47,23 +47,23 @@ class RemoteTerminal < Formula
 
   def caveats
     <<~EOS
-      To start remote-terminal:
-        remote-terminal
+      To start connect:
+        connect
 
       To enable auto-start on login:
-        brew services start remote-terminal
+        brew services start connect
     EOS
   end
 
   service do
-    run [opt_bin/"remote-terminal"]
+    run [opt_bin/"connect"]
     keep_alive true
-    log_path var/"log/remote-terminal.log"
-    error_log_path var/"log/remote-terminal.log"
+    log_path var/"log/connect.log"
+    error_log_path var/"log/connect.log"
   end
 
   test do
-    system "#{bin}/remote-terminal", "--help"
+    system "#{bin}/connect", "--help"
   end
 end
 ```
@@ -72,16 +72,16 @@ end
 
 ```bash
 # Add tap
-brew tap anthropics/remote-terminal
+brew tap anthropics/connect
 
 # Install
-brew install remote-terminal
+brew install connect
 
 # Start
-remote-terminal
+connect
 
 # Or run as service
-brew services start remote-terminal
+brew services start connect
 ```
 
 ---
@@ -97,7 +97,7 @@ Upload `install.sh` to a public URL (GitHub raw, your domain, etc.)
 #### User Installation
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/anthropics/remote-terminal/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/anthropics/connect/main/install.sh | bash
 ```
 
 #### Considerations
@@ -118,15 +118,15 @@ For users who already have Node.js.
 
 ```json
 {
-  "name": "remote-terminal",
+  "name": "connect",
   "version": "1.0.0",
   "bin": {
-    "remote-terminal": "./bin/remote-terminal.js"
+    "connect": "./bin/connect.js"
   }
 }
 ```
 
-2. Create `bin/remote-terminal.js`:
+2. Create `bin/connect.js`:
 
 ```javascript
 #!/usr/bin/env node
@@ -143,8 +143,8 @@ npm publish
 #### User Installation
 
 ```bash
-npm install -g remote-terminal
-remote-terminal
+npm install -g connect
+connect
 ```
 
 ---
@@ -167,7 +167,7 @@ git tag -a v1.0.0 -m "Release v1.0.0"
 git push origin v1.0.0
 
 # Create tarball
-tar -czvf remote-terminal-1.0.0.tar.gz \
+tar -czvf connect-1.0.0.tar.gz \
   --exclude=node_modules \
   --exclude=.git \
   .
@@ -177,11 +177,11 @@ tar -czvf remote-terminal-1.0.0.tar.gz \
 
 ```bash
 # Download
-curl -LO https://github.com/anthropics/remote-terminal/releases/download/v1.0.0/remote-terminal-1.0.0.tar.gz
+curl -LO https://github.com/anthropics/connect/releases/download/v1.0.0/connect-1.0.0.tar.gz
 
 # Extract
-tar -xzf remote-terminal-1.0.0.tar.gz
-cd remote-terminal
+tar -xzf connect-1.0.0.tar.gz
+cd connect
 
 # Install
 ./install.sh
@@ -213,13 +213,13 @@ brew install create-dmg
 
 # Create DMG
 create-dmg \
-  --volname "Remote Terminal" \
+  --volname "Connect" \
   --window-pos 200 120 \
   --window-size 600 400 \
   --icon-size 100 \
   --app-drop-link 425 178 \
-  "RemoteTerminal-1.0.0.dmg" \
-  "build/Remote Terminal.app"
+  "Connect-1.0.0.dmg" \
+  "build/Connect.app"
 ```
 
 ---
@@ -256,7 +256,7 @@ create-dmg \
 For future consideration:
 
 1. **Version check endpoint** - Server checks for updates on start
-2. **Self-update script** - `remote-terminal update` command
+2. **Self-update script** - `connect update` command
 3. **Homebrew** - Users run `brew upgrade`
 
 Example version check:
@@ -264,12 +264,12 @@ Example version check:
 ```javascript
 // On server start
 async function checkForUpdates() {
-  const response = await fetch('https://api.github.com/repos/anthropics/remote-terminal/releases/latest');
+  const response = await fetch('https://api.github.com/repos/anthropics/connect/releases/latest');
   const latest = await response.json();
 
   if (semver.gt(latest.tag_name, currentVersion)) {
     console.log(`Update available: ${latest.tag_name}`);
-    console.log(`Run: brew upgrade remote-terminal`);
+    console.log(`Run: brew upgrade connect`);
   }
 }
 ```

@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.remote-terminal</string>
+    <string>com.connect</string>
 
     <key>ProgramArguments</key>
     <array>
@@ -32,10 +32,10 @@
     </dict>
 
     <key>StandardOutPath</key>
-    <string>HOME_PATH/.remote-terminal/logs/stdout.log</string>
+    <string>HOME_PATH/.connect/logs/stdout.log</string>
 
     <key>StandardErrorPath</key>
-    <string>HOME_PATH/.remote-terminal/logs/stderr.log</string>
+    <string>HOME_PATH/.connect/logs/stderr.log</string>
 
     <key>ThrottleInterval</key>
     <integer>10</integer>

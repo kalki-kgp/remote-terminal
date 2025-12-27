@@ -1,4 +1,4 @@
-# Remote Terminal
+# Connect
 
 Access your Mac terminal from anywhere via browser. Built for Apple Silicon Macs.
 
@@ -23,8 +23,8 @@ Access your Mac terminal from anywhere via browser. Built for Apple Silicon Macs
 
 ```bash
 # Clone and install
-git clone https://github.com/anthropics/remote-terminal.git
-cd remote-terminal
+git clone https://github.com/anthropics/connect.git
+cd connect
 npm install
 
 # Start the server
@@ -41,8 +41,8 @@ Scan the QR code or open the URL to connect.
 
 This will:
 1. Check for Node.js (install if missing)
-2. Install the application to `~/.remote-terminal`
-3. Create the `remote-terminal` command
+2. Install the application to `~/.connect`
+3. Create the `connect` command
 4. Optionally install cloudflared
 5. Optionally set up auto-start on boot
 
@@ -50,25 +50,25 @@ This will:
 
 ### Foreground Mode
 ```bash
-remote-terminal
+connect
 ```
 
 ### Daemon Mode
 ```bash
-remote-terminal-ctl start    # Start as background daemon
-remote-terminal-ctl stop     # Stop the daemon
-remote-terminal-ctl restart  # Restart
-remote-terminal-ctl status   # Check if running
-remote-terminal-ctl logs     # Tail the logs
-remote-terminal-ctl enable   # Enable auto-start on login
-remote-terminal-ctl disable  # Disable auto-start
+connect-ctl start    # Start as background daemon
+connect-ctl stop     # Stop the daemon
+connect-ctl restart  # Restart
+connect-ctl status   # Check if running
+connect-ctl logs     # Tail the logs
+connect-ctl enable   # Enable auto-start on login
+connect-ctl disable  # Disable auto-start
 ```
 
 ### Options
 ```bash
-remote-terminal --cloudflare          # Use Cloudflare Tunnel instead of ngrok
-remote-terminal --ngrok-token TOKEN   # Use authenticated ngrok
-remote-terminal --port 8080           # Use custom port
+connect --cloudflare          # Use Cloudflare Tunnel instead of ngrok
+connect --ngrok-token TOKEN   # Use authenticated ngrok
+connect --port 8080           # Use custom port
 ```
 
 ## Mobile Features
@@ -124,7 +124,7 @@ Works out of the box. For longer sessions:
 
 1. Sign up at https://ngrok.com
 2. Get your auth token
-3. Run: `remote-terminal --ngrok-token YOUR_TOKEN`
+3. Run: `connect --ngrok-token YOUR_TOKEN`
 
 ### Cloudflare Tunnel
 
@@ -132,7 +132,7 @@ Uses Cloudflare's free quick tunnels (no account needed):
 
 ```bash
 brew install cloudflared
-remote-terminal --cloudflare
+connect --cloudflare
 ```
 
 ## Security
@@ -188,11 +188,11 @@ remote-terminal --cloudflare
 
 Or manually:
 ```bash
-remote-terminal-ctl stop
-launchctl unload ~/Library/LaunchAgents/com.remote-terminal.plist
-rm -rf ~/.remote-terminal
-sudo rm /usr/local/bin/remote-terminal /usr/local/bin/remote-terminal-ctl
-rm ~/Library/LaunchAgents/com.remote-terminal.plist
+connect-ctl stop
+launchctl unload ~/Library/LaunchAgents/com.connect.plist
+rm -rf ~/.connect
+sudo rm /usr/local/bin/connect /usr/local/bin/connect-ctl
+rm ~/Library/LaunchAgents/com.connect.plist
 ```
 
 ## Troubleshooting
@@ -201,7 +201,7 @@ rm ~/Library/LaunchAgents/com.remote-terminal.plist
 
 Free ngrok allows 1 session. Either:
 - Close other ngrok instances: `pkill ngrok`
-- Use Cloudflare instead: `remote-terminal --cloudflare`
+- Use Cloudflare instead: `connect --cloudflare`
 - Get ngrok auth token for multiple sessions
 
 ### "Port already in use"

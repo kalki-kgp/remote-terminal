@@ -1,4 +1,4 @@
-// Remote Terminal - Claude Code Style
+// Connect - Claude Code Style
 class RemoteTerminal {
   constructor() {
     this.ws = null;
@@ -18,6 +18,10 @@ class RemoteTerminal {
     this.touchStartY = 0;
     this.isSwiping = false;
     this.swipeThreshold = 80;
+
+    // Favorites
+    this.favorites = [];
+    this.editingFavoriteId = null;
 
     this.init();
   }
@@ -79,6 +83,12 @@ class RemoteTerminal {
 
     // Swipe gestures for tab switching
     this.setupSwipeGestures();
+
+    // Handle virtual keyboard visibility
+    this.setupVirtualKeyboardHandler();
+
+    // Favorites panel
+    this.setupFavoritesPanel();
   }
 
   // Haptic feedback helper
@@ -145,7 +155,8 @@ class RemoteTerminal {
 
         if (sequence) {
           this.send({ type: 'input', terminalId: this.activeTerminalId, data: sequence });
-          terminal.terminal.focus();
+          // Don't call terminal.focus() on mobile as it can trigger virtual keyboard
+          // The terminal should already have focus if the keyboard is open
         }
 
         // Reset Ctrl after use
@@ -223,6 +234,34 @@ class RemoteTerminal {
     }, { passive: true });
   }
 
+  // Handle virtual keyboard showing/hiding
+  setupVirtualKeyboardHandler() {
+    const keyboardBar = document.getElementById('keyboardBar');
+
+    // Use visualViewport API if available (modern mobile browsers)
+    if (window.visualViewport) {
+      const updateKeyboardPosition = () => {
+        const viewport = window.visualViewport;
+        const keyboardHeight = window.innerHeight - viewport.height - viewport.offsetTop;
+
+        if (keyboardHeight > 100) {
+          // Virtual keyboard is open - move bar above it
+          keyboardBar.style.bottom = `${keyboardHeight}px`;
+        } else {
+          // Virtual keyboard is closed
+          keyboardBar.style.bottom = '0';
+        }
+
+        // Refit terminal after keyboard state changes
+        this.fitActiveTerminal();
+      };
+
+      window.visualViewport.addEventListener('resize', updateKeyboardPosition);
+      window.visualViewport.addEventListener('scroll', updateKeyboardPosition);
+    }
+
+  }
+
   openModal() {
     document.getElementById('modalOverlay').classList.add('show');
     this.send({ type: 'get-tmux-sessions' });
@@ -285,6 +324,8 @@ class RemoteTerminal {
       this.reconnectAttempts = 0;
       this.updateStatus('connected');
       document.getElementById('reconnectBanner').classList.remove('show');
+      // Request favorite commands
+      this.send({ type: 'get-commands' });
     };
 
     this.ws.onmessage = (e) => {
@@ -355,6 +396,11 @@ class RemoteTerminal {
       case 'exit':
         const term = this.terminals.get(msg.terminalId);
         if (term) term.terminal.writeln(`\r\n\x1b[33mProcess exited (${msg.exitCode})\x1b[0m`);
+        break;
+
+      case 'commands-list':
+        this.favorites = msg.commands || [];
+        this.renderFavorites();
         break;
     }
   }
@@ -572,6 +618,172 @@ class RemoteTerminal {
     const d = document.createElement('div');
     d.textContent = s;
     return d.innerHTML;
+  }
+
+  // Favorites Panel
+  setupFavoritesPanel() {
+    const btn = document.getElementById('favoritesBtn');
+    const panel = document.getElementById('favoritesPanel');
+    const overlay = document.getElementById('favoritesOverlay');
+    const closeBtn = document.getElementById('favoritesClose');
+    const addBtn = document.getElementById('favoritesAddBtn');
+    const formOverlay = document.getElementById('favoritesFormOverlay');
+    const formCancel = document.getElementById('favoritesFormCancel');
+    const formSave = document.getElementById('favoritesFormSave');
+
+    // Open panel
+    btn.addEventListener('click', () => {
+      panel.classList.add('show');
+      overlay.classList.add('show');
+    });
+
+    // Close panel
+    const closePanel = () => {
+      panel.classList.remove('show');
+      overlay.classList.remove('show');
+    };
+    closeBtn.addEventListener('click', closePanel);
+    overlay.addEventListener('click', closePanel);
+
+    // Add command button
+    addBtn.addEventListener('click', () => {
+      this.openFavoriteForm(null);
+    });
+
+    // Form cancel
+    formCancel.addEventListener('click', () => {
+      this.closeFavoriteForm();
+    });
+
+    // Form save
+    formSave.addEventListener('click', () => {
+      this.saveFavorite();
+    });
+
+    // Close form on overlay click
+    formOverlay.addEventListener('click', (e) => {
+      if (e.target === formOverlay) {
+        this.closeFavoriteForm();
+      }
+    });
+
+    // Handle enter key in form
+    document.getElementById('favoriteCommand').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') this.saveFavorite();
+    });
+  }
+
+  renderFavorites() {
+    const container = document.getElementById('favoritesList');
+
+    if (!this.favorites.length) {
+      container.innerHTML = `
+        <div class="favorites-empty">
+          <div class="favorites-empty-icon">&#9733;</div>
+          <p>No favorite commands yet.<br>Add commands you use often!</p>
+        </div>
+      `;
+      return;
+    }
+
+    container.innerHTML = this.favorites.map(cmd => `
+      <div class="favorite-item" data-id="${cmd.id}">
+        <div class="favorite-content" data-execute="${cmd.id}">
+          <div class="favorite-label">${this.escapeHtml(cmd.label)}</div>
+          <div class="favorite-command">${this.escapeHtml(cmd.command)}</div>
+        </div>
+        <div class="favorite-actions">
+          <button class="favorite-action edit" data-edit="${cmd.id}" title="Edit">&#9998;</button>
+          <button class="favorite-action delete" data-delete="${cmd.id}" title="Delete">&#10005;</button>
+        </div>
+      </div>
+    `).join('');
+
+    // Execute on click
+    container.querySelectorAll('[data-execute]').forEach(el => {
+      el.addEventListener('click', () => {
+        const id = el.dataset.execute;
+        const cmd = this.favorites.find(c => c.id === id);
+        if (cmd) this.executeFavorite(cmd);
+      });
+    });
+
+    // Edit buttons
+    container.querySelectorAll('[data-edit]').forEach(el => {
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const id = el.dataset.edit;
+        const cmd = this.favorites.find(c => c.id === id);
+        if (cmd) this.openFavoriteForm(cmd);
+      });
+    });
+
+    // Delete buttons
+    container.querySelectorAll('[data-delete]').forEach(el => {
+      el.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const id = el.dataset.delete;
+        if (confirm('Delete this command?')) {
+          this.send({ type: 'delete-command', id });
+        }
+      });
+    });
+  }
+
+  openFavoriteForm(cmd) {
+    this.editingFavoriteId = cmd?.id || null;
+    document.getElementById('favoritesFormTitle').textContent = cmd ? 'Edit Command' : 'Add Command';
+    document.getElementById('favoriteLabel').value = cmd?.label || '';
+    document.getElementById('favoriteCommand').value = cmd?.command || '';
+    document.getElementById('favoritesFormOverlay').classList.add('show');
+    document.getElementById('favoriteLabel').focus();
+  }
+
+  closeFavoriteForm() {
+    document.getElementById('favoritesFormOverlay').classList.remove('show');
+    this.editingFavoriteId = null;
+  }
+
+  saveFavorite() {
+    const label = document.getElementById('favoriteLabel').value.trim();
+    const command = document.getElementById('favoriteCommand').value.trim();
+
+    if (!label || !command) {
+      this.showError('Please enter both label and command');
+      return;
+    }
+
+    if (this.editingFavoriteId) {
+      this.send({ type: 'update-command', id: this.editingFavoriteId, label, command });
+    } else {
+      this.send({ type: 'add-command', label, command });
+    }
+
+    this.closeFavoriteForm();
+  }
+
+  executeFavorite(cmd) {
+    if (!this.activeTerminalId) {
+      this.showError('No active terminal');
+      return;
+    }
+
+    // Send command + Enter to terminal
+    this.send({
+      type: 'input',
+      terminalId: this.activeTerminalId,
+      data: cmd.command + '\r',
+    });
+
+    // Close panel
+    document.getElementById('favoritesPanel').classList.remove('show');
+    document.getElementById('favoritesOverlay').classList.remove('show');
+
+    // Focus terminal
+    const t = this.terminals.get(this.activeTerminalId);
+    if (t) t.terminal.focus();
+
+    this.haptic('medium');
   }
 }
 

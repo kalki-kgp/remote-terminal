@@ -8,6 +8,7 @@ import QRCode from 'qrcode';
 import { SessionManager } from './session-manager.js';
 import { TokenAuth, RateLimiter } from './auth.js';
 import { TunnelManager, CloudflareTunnel } from './tunnel.js';
+import { CommandManager } from './commands.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -34,9 +35,13 @@ const rateLimiter = new RateLimiter({
   windowMs: 15 * 60 * 1000, // 15 minutes
   blockDuration: 30 * 60 * 1000, // 30 minutes
 });
+const commandManager = new CommandManager();
 
 // Store WebSocket connections per visitor
 const wsConnections = new Map(); // visitorId -> Set<ws>
+
+// Store tunnel URL for QR regeneration
+let currentTunnelUrl = null;
 
 // Serve static files
 app.use(express.static(join(__dirname, '../public')));
@@ -134,19 +139,32 @@ wss.on('connection', (ws, req) => {
     return;
   }
 
-  // Validate token
-  if (!auth.validateToken(token)) {
-    console.log(`[WS] Invalid token from ${clientIP}`);
-    rateLimiter.recordFailure(clientIP);
-    ws.close(4001, 'Invalid token');
-    return;
-  }
+  // Check if this is an authorized visitor reconnecting
+  const isAuthorizedReconnect = reconnectVisitorId && auth.isVisitorAuthorized(reconnectVisitorId);
 
-  // Successful auth - reset rate limit counter
-  rateLimiter.recordSuccess(clientIP);
+  if (isAuthorizedReconnect) {
+    console.log(`[WS] Authorized visitor reconnecting: ${reconnectVisitorId}`);
+    rateLimiter.recordSuccess(clientIP);
+  } else {
+    // New connection - validate token
+    if (!auth.validateToken(token)) {
+      console.log(`[WS] Invalid token from ${clientIP}`);
+      rateLimiter.recordFailure(clientIP);
+      ws.close(4001, 'Invalid token');
+      return;
+    }
+
+    // Successful auth - reset rate limit counter
+    rateLimiter.recordSuccess(clientIP);
+  }
 
   // Use existing visitor ID or create new one
   const visitorId = reconnectVisitorId || `visitor-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+
+  // If this is a new connection (not a reconnect), consume the token
+  if (!isAuthorizedReconnect) {
+    auth.consumeToken(visitorId);
+  }
 
   console.log(`[WS] Connection established: ${visitorId} (reconnect: ${!!reconnectVisitorId})`);
 
@@ -359,8 +377,131 @@ function handleMessage(visitorId, ws, msg) {
       break;
     }
 
+    // Favorite commands operations
+    case 'get-commands':
+      ws.send(JSON.stringify({
+        type: 'commands-list',
+        commands: commandManager.getAll(),
+      }));
+      break;
+
+    case 'add-command': {
+      try {
+        const newCmd = commandManager.add(msg.label, msg.command);
+        // Broadcast to all connections (sync across devices)
+        for (const [vid, connections] of wsConnections) {
+          for (const conn of connections) {
+            if (conn.readyState === conn.OPEN) {
+              conn.send(JSON.stringify({
+                type: 'commands-list',
+                commands: commandManager.getAll(),
+              }));
+            }
+          }
+        }
+      } catch (error) {
+        ws.send(JSON.stringify({
+          type: 'error',
+          message: error.message,
+        }));
+      }
+      break;
+    }
+
+    case 'update-command': {
+      try {
+        commandManager.update(msg.id, msg.label, msg.command);
+        // Broadcast to all connections
+        for (const [vid, connections] of wsConnections) {
+          for (const conn of connections) {
+            if (conn.readyState === conn.OPEN) {
+              conn.send(JSON.stringify({
+                type: 'commands-list',
+                commands: commandManager.getAll(),
+              }));
+            }
+          }
+        }
+      } catch (error) {
+        ws.send(JSON.stringify({
+          type: 'error',
+          message: error.message,
+        }));
+      }
+      break;
+    }
+
+    case 'delete-command': {
+      try {
+        commandManager.delete(msg.id);
+        // Broadcast to all connections
+        for (const [vid, connections] of wsConnections) {
+          for (const conn of connections) {
+            if (conn.readyState === conn.OPEN) {
+              conn.send(JSON.stringify({
+                type: 'commands-list',
+                commands: commandManager.getAll(),
+              }));
+            }
+          }
+        }
+      } catch (error) {
+        ws.send(JSON.stringify({
+          type: 'error',
+          message: error.message,
+        }));
+      }
+      break;
+    }
+
     default:
       console.log(`[WS] Unknown message type: ${msg.type}`);
+  }
+}
+
+// Display access info and QR code
+function displayAccessInfo(tunnelUrl, token, isRegenerated = false) {
+  const baseUrl = tunnelUrl || `http://localhost:${PORT}`;
+  const accessUrl = `${baseUrl}?token=${token}`;
+
+  console.log('');
+  if (isRegenerated) {
+    console.log('╔═══════════════════════════════════════════════════════════╗');
+    console.log('║           🔄 New Token Generated                          ║');
+    console.log('╠═══════════════════════════════════════════════════════════╣');
+  } else {
+    console.log('╔═══════════════════════════════════════════════════════════╗');
+    console.log('║           🌐 Remote Access Ready                          ║');
+    console.log('╠═══════════════════════════════════════════════════════════╣');
+  }
+  console.log('║                                                           ║');
+  console.log('║  Access URL:                                              ║');
+  console.log(`║  ${baseUrl}`);
+  console.log('║                                                           ║');
+  console.log('║  Token:                                                   ║');
+  console.log(`║  ${token}`);
+  console.log('║                                                           ║');
+  console.log('╠═══════════════════════════════════════════════════════════╣');
+  console.log('║  📱 Scan QR Code to connect:                              ║');
+  console.log('╚═══════════════════════════════════════════════════════════╝');
+  console.log('');
+
+  // Display QR code in terminal
+  qrcode.generate(accessUrl, { small: true }, (qr) => {
+    console.log(qr);
+  });
+
+  console.log('');
+  console.log('Full URL with token:');
+  console.log(`  ${accessUrl}`);
+  console.log('');
+
+  if (isRegenerated) {
+    console.log('╔═══════════════════════════════════════════════════════════╗');
+    console.log('║  ✅ Previous token consumed and invalidated               ║');
+    console.log('║  🔒 One-time token security active                        ║');
+    console.log('╚═══════════════════════════════════════════════════════════╝');
+    console.log('');
   }
 }
 
@@ -369,21 +510,20 @@ async function start() {
   server.listen(PORT, async () => {
     console.log('');
     console.log('╔═══════════════════════════════════════════════════════════╗');
-    console.log('║           🖥️  Remote Terminal Server                       ║');
+    console.log('║           🖥️  Connect Server                                ║');
     console.log('╠═══════════════════════════════════════════════════════════╣');
     console.log(`║  Local:  http://localhost:${PORT}                            ║`);
     console.log('╚═══════════════════════════════════════════════════════════╝');
     console.log('');
 
     // Start tunnel
-    let tunnelUrl = null;
     try {
       if (TUNNEL_TYPE === 'cloudflare') {
         const tunnel = new CloudflareTunnel();
-        tunnelUrl = await tunnel.start(PORT);
+        currentTunnelUrl = await tunnel.start(PORT);
       } else {
         const tunnel = new TunnelManager();
-        tunnelUrl = await tunnel.startNgrok(PORT, NGROK_TOKEN);
+        currentTunnelUrl = await tunnel.startNgrok(PORT, NGROK_TOKEN);
       }
     } catch (error) {
       console.error('');
@@ -391,38 +531,19 @@ async function start() {
       console.error('');
     }
 
-    const baseUrl = tunnelUrl || `http://localhost:${PORT}`;
-    const accessUrl = `${baseUrl}?token=${auth.getToken()}`;
-
-    console.log('╔═══════════════════════════════════════════════════════════╗');
-    console.log('║           🌐 Remote Access Ready                          ║');
-    console.log('╠═══════════════════════════════════════════════════════════╣');
-    console.log('║                                                           ║');
-    console.log('║  Access URL:                                              ║');
-    console.log(`║  ${baseUrl}`);
-    console.log('║                                                           ║');
-    console.log('║  Token:                                                   ║');
-    console.log(`║  ${auth.getToken()}`);
-    console.log('║                                                           ║');
-    console.log('╠═══════════════════════════════════════════════════════════╣');
-    console.log('║  📱 Scan QR Code to connect:                              ║');
-    console.log('╚═══════════════════════════════════════════════════════════╝');
-    console.log('');
-
-    // Display QR code in terminal
-    qrcode.generate(accessUrl, { small: true }, (qr) => {
-      console.log(qr);
+    // Set up callback for when token is regenerated (one-time use)
+    auth.setTokenRegeneratedCallback((newToken) => {
+      displayAccessInfo(currentTunnelUrl, newToken, true);
     });
 
-    console.log('');
-    console.log('Full URL with token:');
-    console.log(`  ${accessUrl}`);
-    console.log('');
+    // Display initial access info
+    displayAccessInfo(currentTunnelUrl, auth.getToken(), false);
+
     // Check tmux availability
     const tmuxInfo = sessionManager.getTmuxInfo();
 
     console.log('╔═══════════════════════════════════════════════════════════╗');
-    console.log('║  ⚠️  Keep this token secret!                               ║');
+    console.log('║  🔒 One-time token security enabled                       ║');
     console.log('║  ✨ Sessions persist across reconnections                 ║');
     console.log('║  📑 Multiple terminals supported (tabs)                   ║');
     if (tmuxInfo.available) {
