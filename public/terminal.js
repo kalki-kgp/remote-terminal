@@ -413,13 +413,15 @@ class RemoteTerminal {
     this.wslTmuxMissing = info.wslTmuxMissing || false;
 
     const badge = document.getElementById('tmuxBadge');
-    badge.classList.toggle('unavailable', !this.tmuxAvailable);
+    if (badge) {
+      badge.classList.toggle('unavailable', !this.tmuxAvailable);
 
-    // Update badge text if using WSL
-    if (this.tmuxAvailable && this.tmuxUseWSL) {
-      badge.textContent = 'tmux (WSL)';
-    } else {
-      badge.textContent = 'tmux';
+      // Update badge text if using WSL
+      if (this.tmuxAvailable && this.tmuxUseWSL) {
+        badge.textContent = 'tmux (WSL)';
+      } else {
+        badge.textContent = 'tmux';
+      }
     }
 
     this.renderTmuxSessions();
@@ -427,6 +429,7 @@ class RemoteTerminal {
 
   renderTmuxSessions() {
     const container = document.getElementById('tmuxSessionsList');
+    if (!container) return;
 
     if (!this.tmuxAvailable) {
       // Check if we're on Windows and can help user set up tmux
